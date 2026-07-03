@@ -19264,7 +19264,8 @@ window.toggleInjuryPrintPreview = function(){
         <div>
           <label style="font-weight:700;display:block;margin-bottom:6px;"><i class="fas fa-search"></i> Select worker</label>
           <input type="text" id="eqrSearch" placeholder="Search by name, ID, department..." oninput="renderEqrWorkerList()" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">
-          <div id="eqrWorkerList" style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px;"></div>
+          <button class="btn" onclick="printAllEmergencyQRs()" style="width:100%;background:linear-gradient(135deg,#7c3aed,#4c1d95);color:#fff;margin-bottom:8px;"><i class="fas fa-print"></i> Print ALL Workers QR Cards</button>
+          <div id="eqrWorkerList" style="max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px;"></div>
         </div>
         <div id="eqrPanel" style="display:none;">
           <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
@@ -19518,6 +19519,80 @@ window.toggleInjuryPrintPreview = function(){
     navigator.clipboard.writeText(txt).then(()=>alert('Emergency data copied to clipboard'));
   };
 
+  window.printAllEmergencyQRs = async function(){
+    const src = (typeof workers !== 'undefined' && Array.isArray(workers)) ? workers : [];
+    if (!src.length){ alert('No workers found'); return; }
+    const btnConfirm = confirm('Generate printable sheet with QR codes for all ' + src.length + ' workers?');
+    if (!btnConfirm) return;
+
+    // Offscreen staging container
+    const stage = document.createElement('div');
+    stage.style.cssText = 'position:fixed;left:-99999px;top:0;';
+    document.body.appendChild(stage);
+
+    const cards = [];
+    for (const w of src){
+      try {
+        const snapshot = buildEmergencySnapshot(w);
+        const enc = toB64Url(snapshot);
+        const liveUrl = location.origin + location.pathname + '#e=' + enc;
+        const holder = document.createElement('div');
+        stage.appendChild(holder);
+        new QRCode(holder, { text: liveUrl, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.L });
+        // Wait a tick for QR render
+        await new Promise(r => setTimeout(r, 30));
+        const img = holder.querySelector('img');
+        const canvas = holder.querySelector('canvas');
+        const qrSrc = img ? img.src : (canvas ? canvas.toDataURL('image/png') : '');
+        cards.push({
+          name: w.name || '',
+          id: w.id || '',
+          job: w.role || w.job || '',
+          dept: w.department || '',
+          nationality: w.nationality || '',
+          phone: w.phone || '',
+          bt: snapshot.bt || '',
+          qr: qrSrc
+        });
+      } catch(e){ console.error('QR build failed for worker', w && w.id, e); }
+    }
+    stage.remove();
+
+    const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const cardsHtml = cards.map(c => `
+      <div class="qrcard">
+        <div class="hd"><i class="fas fa-ambulance"></i> EMERGENCY QR</div>
+        <img src="${c.qr}" alt="QR">
+        <div class="nm">${esc(c.name)}</div>
+        <div class="meta">ID: <b>${esc(c.id)}</b></div>
+        <div class="meta">${esc(c.job)}${c.dept?(' · '+esc(c.dept)):''}</div>
+        <div class="meta">${c.phone?('☎ '+esc(c.phone)):''}${c.bt?('  ·  Blood: <b>'+esc(c.bt)+'</b>'):''}</div>
+        <div class="foot">Scan to view live medical info</div>
+      </div>`).join('');
+
+    const win = window.open('', '_blank');
+    win.document.write(`<!doctype html><html><head><title>All Workers Emergency QR Cards (${cards.length})</title>
+      <style>
+        @page { size: A4; margin: 10mm; }
+        *{box-sizing:border-box}
+        body{font-family:Inter,Arial,sans-serif;margin:0;padding:12px;color:#111;background:#fff}
+        h1{font-size:18px;margin:0 0 12px;color:#b91c1c;text-align:center}
+        .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+        .qrcard{border:2px solid #b91c1c;border-radius:10px;padding:10px;text-align:center;page-break-inside:avoid;break-inside:avoid;background:#fff}
+        .qrcard .hd{font-size:11px;font-weight:800;color:#b91c1c;letter-spacing:1px;margin-bottom:6px}
+        .qrcard img{width:170px;height:170px;display:block;margin:0 auto 6px}
+        .qrcard .nm{font-weight:800;font-size:14px;color:#0f172a;margin-bottom:2px}
+        .qrcard .meta{font-size:11px;color:#334155;line-height:1.35}
+        .qrcard .foot{margin-top:6px;font-size:9px;color:#64748b;font-style:italic}
+        @media print { body{padding:0} .noprint{display:none} }
+      </style></head><body>
+      <h1>🚨 Smart Emergency QR — All Workers (${cards.length}) — ${new Date().toLocaleDateString('en-GB')}</h1>
+      <div class="grid">${cardsHtml}</div>
+      <script>window.addEventListener('load', () => setTimeout(() => window.print(), 300));<\/script>
+      </body></html>`);
+    win.document.close();
+  };
+
   window.printEmergencyCard = function(){
     const src = (typeof workers !== 'undefined' && Array.isArray(workers)) ? workers : [];
     const w = src.find(x => String(x.id) === String(_eqrCurrentWorkerId));
@@ -19548,7 +19623,17 @@ window.toggleInjuryPrintPreview = function(){
 </script>
 
 <!-- ====================== LIVE EMERGENCY VIEW ====================== -->
-<div id="liveEmergencyView" style="display:none;position:fixed;inset:0;z-index:100000;background:#f8fafc;overflow:auto;padding:0;font-family:Inter,Arial,sans-serif;"></div>
+<div id="liveEmergencyView" style="display:none;position:fixed;inset:0;z-index:100000;background:#f8fafc;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:0;font-family:Inter,Arial,sans-serif;"></div>
+<style id="live-emg-print">
+@media print {
+  body > *:not(#liveEmergencyView) { display: none !important; }
+  #liveEmergencyView { position: static !important; inset: auto !important; overflow: visible !important; background: #fff !important; display: block !important; height: auto !important; }
+  #liveEmergencyView .no-print { display: none !important; }
+  #liveEmergencyView .emg-header { position: static !important; box-shadow: none !important; }
+  a[href^="tel:"] { color: #000 !important; text-decoration: none !important; }
+  @page { margin: 12mm; }
+}
+</style>
 
 <script>
 (function(){
@@ -19674,13 +19759,13 @@ window.toggleInjuryPrintPreview = function(){
     };
 
     root.innerHTML = `
-      <div style="background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 12px rgba(0,0,0,.15);">
+      <div class="emg-header" style="background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 12px rgba(0,0,0,.15);position:sticky;top:0;z-index:5;">
         <div>
           <div style="font-size:12px;letter-spacing:2px;opacity:.9;font-weight:700;">EMERGENCY MEDICAL INFO — LIVE</div>
           <div style="font-size:22px;font-weight:800;margin-top:2px;"><i class="fas fa-ambulance"></i> ${esc(worker.name||'')}</div>
         </div>
-        <div style="display:flex;gap:8px;">
-          <button onclick="window.print()" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;"><i class="fas fa-print"></i> Print</button>
+        <div class="no-print" style="display:flex;gap:8px;">
+          <button onclick="printEmergencyLive('${esc(worker.name||'')}')" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;"><i class="fas fa-print"></i> Print</button>
           <button onclick="location.hash=''" style="background:#fff;color:#b91c1c;border:0;padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:700;"><i class="fas fa-arrow-left"></i> Back</button>
         </div>
       </div>
@@ -19773,13 +19858,14 @@ window.toggleInjuryPrintPreview = function(){
     };
     const ec = s.ec || {};
     root.innerHTML = `
-      <div style="background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 12px rgba(0,0,0,.15);">
+      <div class="emg-header" style="background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 12px rgba(0,0,0,.15);position:sticky;top:0;z-index:5;">
         <div>
           <div style="font-size:12px;letter-spacing:2px;opacity:.9;font-weight:700;">EMERGENCY MEDICAL INFO</div>
           <div style="font-size:22px;font-weight:800;margin-top:2px;"><i class="fas fa-ambulance"></i> ${esc(s.n||'')}</div>
         </div>
-        <div style="display:flex;gap:8px;">
-          <button onclick="window.print()" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;"><i class="fas fa-print"></i> Print</button>
+        <div class="no-print" style="display:flex;gap:8px;">
+          <button onclick="printEmergencyLive('${esc(s.n||'')}')" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;"><i class="fas fa-print"></i> Print</button>
+          <button onclick="location.hash=''" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;"><i class="fas fa-arrow-left"></i> Back</button>
         </div>
       </div>
       <div style="max-width:960px;margin:20px auto;padding:0 16px;">
@@ -19877,6 +19963,13 @@ window.toggleInjuryPrintPreview = function(){
     }
   }
 
+  window.printEmergencyLive = function(name){
+    const prev = document.title;
+    try { document.title = 'Emergency Info - ' + (name || 'worker'); } catch(e){}
+    const restore = () => { try { document.title = prev; } catch(e){} window.removeEventListener('afterprint', restore); };
+    window.addEventListener('afterprint', restore);
+    setTimeout(() => { window.print(); }, 50);
+  };
   window.addEventListener('hashchange', checkHash);
   window.addEventListener('storage', function(){
     if ((location.hash||'').startsWith('#emergency=')) checkHash();
