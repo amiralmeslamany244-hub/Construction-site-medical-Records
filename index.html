@@ -19260,25 +19260,39 @@ window.toggleInjuryPrintPreview = function(){
       <button class="close-modal-btn" onclick="closeEmergencyQRModal()"><i class="fas fa-times"></i></button>
     </div>
     <div class="modal-body">
-      <div style="display:grid;grid-template-columns:1fr 1.2fr;gap:18px;">
+      <div style="display:grid;grid-template-columns:1fr 1.4fr;gap:18px;">
         <div>
           <label style="font-weight:700;display:block;margin-bottom:6px;"><i class="fas fa-search"></i> Select worker</label>
           <input type="text" id="eqrSearch" placeholder="Search by name, ID, department..." oninput="renderEqrWorkerList()" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;">
-          <div id="eqrWorkerList" style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px;"></div>
+          <div id="eqrWorkerList" style="max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px;"></div>
         </div>
         <div id="eqrPanel" style="display:none;">
-          <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;">
-            <div id="eqrQrBox" style="padding:12px;background:#fff;border:2px solid #b91c1c;border-radius:12px;"></div>
-            <div style="flex:1;min-width:220px;">
-              <div id="eqrInfo" style="font-size:0.92em;line-height:1.55;"></div>
+          <!-- DUAL QR: Quick + Full -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+            <div style="border:2px solid #b91c1c;border-radius:12px;padding:10px;background:#fff5f5;text-align:center;">
+              <div style="font-weight:800;color:#b91c1c;font-size:0.95em;margin-bottom:6px;"><i class="fas fa-bolt"></i> QUICK CARD</div>
+              <div style="font-size:0.72em;color:#7f1d1d;margin-bottom:8px;">Scans offline · Critical info only</div>
+              <div id="eqrQrBoxQuick" style="display:inline-block;padding:8px;background:#fff;border-radius:8px;"></div>
+              <div id="eqrQuickSize" style="font-size:0.7em;color:#94a3b8;margin-top:6px;"></div>
+            </div>
+            <div style="border:2px solid #1e40af;border-radius:12px;padding:10px;background:#eff6ff;text-align:center;">
+              <div style="font-weight:800;color:#1e40af;font-size:0.95em;margin-bottom:6px;"><i class="fas fa-notes-medical"></i> FULL RECORD</div>
+              <div style="font-size:0.72em;color:#1e3a8a;margin-bottom:8px;">Opens complete medical history</div>
+              <div id="eqrQrBoxFull" style="display:inline-block;padding:8px;background:#fff;border-radius:8px;"></div>
+              <div id="eqrFullSize" style="font-size:0.7em;color:#94a3b8;margin-top:6px;"></div>
             </div>
           </div>
+
+          <div id="eqrInfo" style="font-size:0.9em;line-height:1.55;background:#fafafa;border:1px solid var(--border);border-radius:10px;padding:12px;"></div>
+
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
-            <button class="btn" onclick="downloadEmergencyQR()" style="background:linear-gradient(135deg,#0f4c75,#3282b8);"><i class="fas fa-download"></i> Download QR (PNG)</button>
-            <button class="btn" onclick="printEmergencyCard()" style="background:linear-gradient(135deg,#dc2626,#991b1b);"><i class="fas fa-print"></i> Print Emergency Card</button>
+            <button class="btn" onclick="downloadEmergencyQR('quick')" style="background:linear-gradient(135deg,#dc2626,#991b1b);"><i class="fas fa-download"></i> Download Quick QR</button>
+            <button class="btn" onclick="downloadEmergencyQR('full')" style="background:linear-gradient(135deg,#1e40af,#1e3a8a);"><i class="fas fa-download"></i> Download Full QR</button>
+            <button class="btn" onclick="printEmergencyCard()" style="background:linear-gradient(135deg,#0f4c75,#3282b8);"><i class="fas fa-print"></i> Print / Save PDF</button>
+            <button class="btn" onclick="testScanEmergency()" style="background:linear-gradient(135deg,#7c3aed,#5b21b6);"><i class="fas fa-eye"></i> Preview Nurse View</button>
             <button class="btn" onclick="copyEmergencyData()" style="background:linear-gradient(135deg,#10b981,#059669);"><i class="fas fa-copy"></i> Copy Data</button>
           </div>
-          <p style="margin-top:10px;font-size:0.82em;color:var(--text-secondary);"><i class="fas fa-info-circle"></i> The QR encodes a live link. Scanning it opens the worker's <b>latest</b> emergency profile as of the moment of scanning — including any updates made after the QR was generated.</p>
+          <p style="margin-top:10px;font-size:0.82em;color:var(--text-secondary);"><i class="fas fa-info-circle"></i> <b>Quick QR</b> works offline — any phone camera reveals critical data (blood type, allergies, chronic diseases, meds, emergency contact). <b>Full QR</b> opens the full medical history page — no login needed.</p>
           <div id="eqrLinkBox" style="margin-top:8px;font-size:0.78em;color:var(--text-muted);word-break:break-all;"></div>
         </div>
       </div>
@@ -19426,50 +19440,130 @@ window.toggleInjuryPrintPreview = function(){
     };
   };
 
+  // Build QUICK payload (critical info only, ~<500 chars)
+  window.buildEmergencyQuickPayload = function(worker){
+    const phys   = (typeof workerPhysicalReports!=='undefined' && workerPhysicalReports[worker.id]) || [];
+    const clinic = (typeof workerClinicReports!=='undefined'   && workerClinicReports[worker.id])   || [];
+    const inj    = (typeof workerInjuryReports!=='undefined'   && workerInjuryReports[worker.id])   || [];
+    const pickV = (o, keys) => { for (const k of keys){ if (o && o[k]!=null && String(o[k]).trim()!=='') return String(o[k]).trim(); } return ''; };
+    const chronic=new Set(), allergies=new Set(), meds=new Set();
+    let bloodType='';
+    [...phys, ...clinic].forEach(r=>{
+      const d=(r&&r.data)?r.data:{};
+      ['chronicDiseases','chronic','chronic_disease','medicalHistory','pastMedicalHistory'].forEach(k=>{ if(d[k]) chronic.add(String(d[k]).trim()); });
+      ['allergies','allergy','drugAllergy','foodAllergy'].forEach(k=>{ if(d[k]) allergies.add(String(d[k]).trim()); });
+      ['medications','currentMedications','medication','drugs','treatment'].forEach(k=>{ if(d[k]) meds.add(String(d[k]).trim()); });
+      const bt=pickV(d,['bloodType','bloodGroup','blood_group']);
+      if(bt && !bloodType) bloodType=bt;
+    });
+    const lastOf = arr => arr.length ? [...arr].sort((a,b)=>{
+      const da=new Date(a.date||(a.data&&(a.data.date||a.data.visitDate||a.data.injuryDate))||0).getTime();
+      const db=new Date(b.date||(b.data&&(b.data.date||b.data.visitDate||b.data.injuryDate))||0).getTime();
+      return db-da;
+    })[0] : null;
+    const lc=lastOf(clinic), li=lastOf(inj);
+    return {
+      v:3, t:'eq',
+      n:worker.name||'', id:worker.id||'', nid:worker.nationalId||worker.id||'',
+      j:worker.role||worker.job||'', dp:worker.department||'',
+      st:worker.site||worker.location||worker.projectSite||'',
+      ag:worker.age||'', nt:worker.nationality||'', ph:worker.phone||'',
+      bt:bloodType,
+      al:Array.from(allergies).filter(Boolean).slice(0,6).map(s=>truncate(s,50)),
+      ch:Array.from(chronic).filter(Boolean).slice(0,6).map(s=>truncate(s,50)),
+      md:Array.from(meds).filter(Boolean).slice(0,6).map(s=>truncate(s,50)),
+      ec:{ n:worker.emergencyContactName||worker.emergencyName||'', r:worker.emergencyContactRelation||worker.emergencyRelation||'', p:worker.emergencyContactPhone||worker.emergencyPhone||'' },
+      dx: lc && lc.data ? truncate(pickV(lc.data,['diagnosis','chiefComplaint','complaint']),60) : '',
+      lin: li && li.data ? truncate(pickV(li.data,['injuryType','type','natureOfInjury']),40) : ''
+    };
+  };
+
+  // Build FULL snapshot with ALL records for the Full QR
+  window.buildEmergencyFullSnapshot = function(worker){
+    const base = buildEmergencySnapshot(worker);
+    const phys   = (typeof workerPhysicalReports!=='undefined' && workerPhysicalReports[worker.id]) || [];
+    const clinic = (typeof workerClinicReports!=='undefined'   && workerClinicReports[worker.id])   || [];
+    const inj    = (typeof workerInjuryReports!=='undefined'   && workerInjuryReports[worker.id])   || [];
+    const pickV = (o, keys) => { for (const k of keys){ if (o && o[k]!=null && String(o[k]).trim()!=='') return String(o[k]).trim(); } return ''; };
+    const shrinkAll = (arr, fieldMap) => arr.map(entry => {
+      const d = entry.data || {};
+      const out = { date: entry.date || d.date || d.visitDate || d.injuryDate || '' };
+      Object.entries(fieldMap).forEach(([k, ks]) => { const v = pickV(d, ks); if (v) out[k] = truncate(v, 200); });
+      return out;
+    });
+    base.v = 3; base.t = 'eprof_full';
+    base.physAll   = shrinkAll(phys,   { result:['result','examResult','fitnessResult'], status:['status','fitnessStatus'], notes:['notes','remarks','comment'] });
+    base.clinicAll = shrinkAll(clinic, { complaint:['complaint','chiefComplaint','presentComplaint'], diagnosis:['diagnosis'], treatment:['treatment','medication','prescription'] });
+    base.injAll    = shrinkAll(inj,    { type:['injuryType','type','natureOfInjury'], body:['bodyPart','injuryLocation'], desc:['description','howHappened','details'], severity:['severity','grade'] });
+    return base;
+  };
+
   window.selectEqrWorker = function(id){
     const src = (typeof workers !== 'undefined' && Array.isArray(workers)) ? workers : [];
     const w = src.find(x => String(x.id) === String(id));
     if (!w) return;
     _eqrCurrentWorkerId = w.id;
-    const payload  = buildEmergencyPayload(w);
-    const snapshot = buildEmergencySnapshot(w);
 
-    // The full snapshot is embedded in the URL hash — the scanner sees the
-    // worker's data immediately, without logging into the domain.
-    const enc = toB64Url(snapshot);
+    const quick = buildEmergencyQuickPayload(w);
+    const full  = buildEmergencyFullSnapshot(w);
+
+    // QR-A: Quick — pure text/JSON, scans offline with any camera app
+    const quickText = JSON.stringify(quick);
+    const qBoxQ = document.getElementById('eqrQrBoxQuick');
+    qBoxQ.innerHTML = '';
+    new QRCode(qBoxQ, { text: quickText, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M });
+    document.getElementById('eqrQuickSize').textContent = quickText.length + ' chars · offline scan';
+
+    // QR-B: Full — URL that opens the nurse view with complete history
+    const enc = toB64Url(full);
     const liveUrl = location.origin + location.pathname + '#e=' + enc;
+    const qBoxF = document.getElementById('eqrQrBoxFull');
+    qBoxF.innerHTML = '';
+    const isLarge = liveUrl.length > 2000;
+    new QRCode(qBoxF, { text: liveUrl, width: isLarge ? 300 : 240, height: isLarge ? 300 : 240, correctLevel: QRCode.CorrectLevel.L });
+    document.getElementById('eqrFullSize').innerHTML = liveUrl.length + ' chars' + (isLarge ? ' · <span style="color:#dc2626;">large QR — scan closely</span>' : '');
 
-    const box = document.getElementById('eqrQrBox');
-    box.innerHTML = '';
-    // Use L correction level so larger self-contained payloads still fit.
-    new QRCode(box, { text: liveUrl, width: 300, height: 300, correctLevel: QRCode.CorrectLevel.L });
     const linkBox = document.getElementById('eqrLinkBox');
-    if (linkBox) linkBox.innerHTML = '<i class="fas fa-link"></i> <span style="opacity:.75">Self-contained URL (' + enc.length + ' chars) — scanner sees data without login.</span>';
+    if (linkBox) linkBox.innerHTML = '<i class="fas fa-link"></i> <span style="opacity:.75">Full URL (' + enc.length + ' chars) · Records: ' + full.physAll.length + ' physical / ' + full.clinicAll.length + ' clinic / ' + full.injAll.length + ' injuries</span>';
 
+    // Preview panel — nurse-facing critical highlights
     const info = document.getElementById('eqrInfo');
-    const injHtml = payload.injuries.length ? payload.injuries.map(i=>`<li>${escapeHtml(i.date)} — ${escapeHtml(i.type||'—')} <span style="color:var(--text-secondary);">${escapeHtml(i.body||'')}</span> ${i.desc?'<br><span style="color:var(--text-secondary);font-size:0.9em;">'+escapeHtml(i.desc)+'</span>':''}</li>`).join('') : '<li style="color:var(--text-muted);">None</li>';
-    const visitHtml = payload.clinicVisits.length ? payload.clinicVisits.map(v=>`<li>${escapeHtml(v.date)} — ${escapeHtml(v.complaint||'—')} ${v.diagnosis?'<span style="color:var(--text-secondary);"> · '+escapeHtml(v.diagnosis)+'</span>':''}</li>`).join('') : '<li style="color:var(--text-muted);">None</li>';
+    const chip = (label, val, bg, fg) => `<span style="display:inline-block;background:${bg};color:${fg};padding:4px 10px;border-radius:14px;font-size:0.82em;font-weight:700;margin:2px 4px 2px 0;">${escapeHtml(label)}: ${escapeHtml(val||'—')}</span>`;
+    const alertBlock = (title, icon, color, items) => items && items.length ? `
+      <div style="background:${color}15;border-left:4px solid ${color};padding:8px 10px;border-radius:6px;margin-top:8px;">
+        <div style="font-weight:800;color:${color};font-size:0.88em;"><i class="fas ${icon}"></i> ${escapeHtml(title)}</div>
+        <div style="color:#0f172a;margin-top:2px;">${items.map(escapeHtml).join(' · ')}</div>
+      </div>` : '';
     info.innerHTML = `
-      <div style="font-size:1.15em;font-weight:800;color:#b91c1c;"><i class="fas fa-user-shield"></i> ${escapeHtml(payload.name)}</div>
-      <div><b>ID / National ID:</b> ${escapeHtml(payload.nationalId)}</div>
-      <div><b>Job:</b> ${escapeHtml(payload.job)} — <b>Dept:</b> ${escapeHtml(payload.department)}</div>
-      <div><b>Age:</b> ${escapeHtml(payload.age)} · <b>Nationality:</b> ${escapeHtml(payload.nationality)}</div>
-      <div><b>Phone:</b> ${escapeHtml(payload.phone)}</div>
-      <div style="margin-top:6px;"><b>Chronic diseases:</b> ${escapeHtml(payload.chronicDiseases||'—')}</div>
-      <div style="margin-top:6px;"><b><i class="fas fa-exclamation-triangle" style="color:#dc2626;"></i> Injuries (${payload.injuries.length}):</b><ul style="margin:4px 0 0 18px;">${injHtml}</ul></div>
-      <div style="margin-top:6px;"><b><i class="fas fa-hospital" style="color:#0284c7;"></i> Clinic visits (${payload.clinicVisits.length}):</b><ul style="margin:4px 0 0 18px;">${visitHtml}</ul></div>
+      <div style="font-size:1.15em;font-weight:800;color:#b91c1c;"><i class="fas fa-user-shield"></i> ${escapeHtml(quick.n)}
+        <span style="font-size:0.7em;color:var(--text-secondary);font-weight:600;">ID ${escapeHtml(quick.id)}</span></div>
+      <div style="color:var(--text-secondary);font-size:0.88em;margin-bottom:6px;">${escapeHtml(quick.j)} · ${escapeHtml(quick.dp)} · ${escapeHtml(quick.st||'—')}</div>
+      <div>${chip('Blood', quick.bt, '#fee2e2', '#b91c1c')}${chip('Age', quick.ag, '#f1f5f9', '#0f172a')}${chip('Nationality', quick.nt, '#f1f5f9', '#0f172a')}${chip('Phone', quick.ph, '#e0f2fe', '#0369a1')}</div>
+      ${alertBlock('Allergies', 'fa-exclamation-triangle', '#dc2626', quick.al)}
+      ${alertBlock('Chronic diseases', 'fa-heart-pulse', '#ea580c', quick.ch)}
+      ${alertBlock('Current medications', 'fa-pills', '#2563eb', quick.md)}
+      ${quick.ec.n || quick.ec.p ? `<div style="background:#dcfce7;border-left:4px solid #16a34a;padding:8px 10px;border-radius:6px;margin-top:8px;">
+        <div style="font-weight:800;color:#15803d;font-size:0.88em;"><i class="fas fa-phone"></i> Emergency contact</div>
+        <div style="color:#0f172a;margin-top:2px;">${escapeHtml(quick.ec.n||'—')}${quick.ec.r?' ('+escapeHtml(quick.ec.r)+')':''} ${quick.ec.p?' — <a href="tel:'+escapeHtml(quick.ec.p)+'" style="color:#15803d;font-weight:800;">'+escapeHtml(quick.ec.p)+'</a>':''}</div>
+      </div>`:''}
     `;
     document.getElementById('eqrPanel').style.display = 'block';
   };
 
-  window.downloadEmergencyQR = function(){
-    const box = document.getElementById('eqrQrBox');
+  function qrDataUrl(boxId){
+    const box = document.getElementById(boxId);
+    if (!box) return null;
     const img = box.querySelector('img');
     const canvas = box.querySelector('canvas');
-    const src = img ? img.src : (canvas ? canvas.toDataURL('image/png') : null);
+    return img ? img.src : (canvas ? canvas.toDataURL('image/png') : null);
+  }
+
+  window.downloadEmergencyQR = function(kind){
+    const boxId = kind === 'full' ? 'eqrQrBoxFull' : 'eqrQrBoxQuick';
+    const src = qrDataUrl(boxId);
     if (!src) return;
     const a = document.createElement('a');
-    a.href = src; a.download = 'emergency_qr_'+(_eqrCurrentWorkerId||'worker')+'.png';
+    a.href = src; a.download = 'emergency_' + (kind||'quick') + '_' + (_eqrCurrentWorkerId||'worker') + '.png';
     document.body.appendChild(a); a.click(); a.remove();
   };
 
@@ -19477,33 +19571,48 @@ window.toggleInjuryPrintPreview = function(){
     const src = (typeof workers !== 'undefined' && Array.isArray(workers)) ? workers : [];
     const w = src.find(x => String(x.id) === String(_eqrCurrentWorkerId));
     if (!w) return;
-    const txt = JSON.stringify(buildEmergencyPayload(w), null, 2);
+    const txt = JSON.stringify(buildEmergencyQuickPayload(w), null, 2);
     navigator.clipboard.writeText(txt).then(()=>alert('Emergency data copied to clipboard'));
+  };
+
+  window.testScanEmergency = function(){
+    const src = (typeof workers !== 'undefined' && Array.isArray(workers)) ? workers : [];
+    const w = src.find(x => String(x.id) === String(_eqrCurrentWorkerId));
+    if (!w) return;
+    const full = buildEmergencyFullSnapshot(w);
+    location.hash = 'e=' + toB64Url(full);
   };
 
   window.printEmergencyCard = function(){
     const src = (typeof workers !== 'undefined' && Array.isArray(workers)) ? workers : [];
     const w = src.find(x => String(x.id) === String(_eqrCurrentWorkerId));
     if (!w) return;
-    const box = document.getElementById('eqrQrBox');
-    const img = box.querySelector('img');
-    const canvas = box.querySelector('canvas');
-    const qrSrc = img ? img.src : (canvas ? canvas.toDataURL('image/png') : '');
+    const qQuick = qrDataUrl('eqrQrBoxQuick') || '';
+    const qFull  = qrDataUrl('eqrQrBoxFull')  || '';
     const infoHtml = document.getElementById('eqrInfo').innerHTML;
-    const win = window.open('', '_blank', 'width=800,height=1000');
+    const win = window.open('', '_blank', 'width=900,height=1100');
     win.document.write(`<!doctype html><html><head><title>Emergency Card - ${w.name}</title>
-      <style>body{font-family:Inter,Arial,sans-serif;margin:24px;color:#111}
-      .card{border:3px solid #b91c1c;border-radius:14px;padding:18px;max-width:720px;margin:auto}
-      .head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #b91c1c;padding-bottom:8px;margin-bottom:12px}
-      .head h1{color:#b91c1c;font-size:20px;margin:0}
-      .row{display:flex;gap:18px;align-items:flex-start}
-      img.qr{width:230px;height:230px}
-      ul{margin:4px 0 0 18px} .info{font-size:14px;line-height:1.5}
-      </style></head><body onload="window.print()">
+      <style>
+        body{font-family:Inter,Arial,sans-serif;margin:20px;color:#111}
+        .card{border:3px solid #b91c1c;border-radius:14px;padding:18px;max-width:780px;margin:auto}
+        .head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #b91c1c;padding-bottom:8px;margin-bottom:12px}
+        .head h1{color:#b91c1c;font-size:20px;margin:0}
+        .qrs{display:flex;gap:20px;justify-content:center;margin:12px 0;flex-wrap:wrap}
+        .qrb{text-align:center;border:2px dashed #cbd5e1;border-radius:10px;padding:10px}
+        .qrb img{width:210px;height:210px}
+        .qrb .lbl{font-weight:800;margin-bottom:6px;font-size:14px}
+        .qrb .q{color:#b91c1c} .qrb .f{color:#1e40af}
+        .info{font-size:13px;line-height:1.55;margin-top:8px;padding:10px;background:#fafafa;border-radius:8px}
+        .foot{margin-top:12px;font-size:11px;color:#555;text-align:center}
+      </style></head><body onload="setTimeout(()=>window.print(),300)">
       <div class="card">
-        <div class="head"><h1>🚨 SMART EMERGENCY QR CARD</h1><div>${new Date().toLocaleDateString('en-GB')}</div></div>
-        <div class="row"><img class="qr" src="${qrSrc}"><div class="info">${infoHtml}</div></div>
-        <p style="margin-top:12px;font-size:12px;color:#555;">Scan the QR to open this worker's LIVE emergency profile (always up to date at scan time).</p>
+        <div class="head"><h1>🚨 SMART EMERGENCY MEDICAL CARD</h1><div>${new Date().toLocaleDateString('en-GB')}</div></div>
+        <div class="qrs">
+          <div class="qrb"><div class="lbl q">⚡ QUICK — Offline</div><img src="${qQuick}"><div style="font-size:11px;color:#666;margin-top:4px;">Any phone camera</div></div>
+          <div class="qrb"><div class="lbl f">📋 FULL RECORD</div><img src="${qFull}"><div style="font-size:11px;color:#666;margin-top:4px;">Opens medical history</div></div>
+        </div>
+        <div class="info">${infoHtml}</div>
+        <div class="foot">Attach to helmet / worker ID. Scan Quick QR for immediate critical info offline. Scan Full QR to open the complete medical record page.</div>
       </div></body></html>`);
     win.document.close();
   };
@@ -19772,6 +19881,37 @@ window.toggleInjuryPrintPreview = function(){
         </div>
         <div style="margin-top:14px;">
           ${lastCardSnap('Last Injury Report', s.li, [['Type','type'],['Body part','body'],['Description','desc'],['Severity','severity']])}
+        </div>
+
+        ${(s.physAll && s.physAll.length) || (s.clinicAll && s.clinicAll.length) || (s.injAll && s.injAll.length) ? `
+        <details style="margin-top:16px;background:#fff;border-radius:14px;padding:14px 18px;box-shadow:0 4px 12px rgba(0,0,0,.05);">
+          <summary style="cursor:pointer;font-weight:800;color:#0f172a;font-size:15px;"><i class="fas fa-clipboard-list" style="color:#0f4c75;"></i> Full Medical History
+            <span style="color:#64748b;font-weight:500;font-size:13px;">(${(s.physAll||[]).length} physical · ${(s.clinicAll||[]).length} clinic · ${(s.injAll||[]).length} injuries)</span></summary>
+          <div style="margin-top:12px;">
+            ${(s.injAll||[]).length ? `<div style="margin-bottom:14px;"><div style="font-weight:700;color:#b91c1c;margin-bottom:6px;"><i class="fas fa-exclamation-triangle"></i> All Injury Reports</div>${
+              s.injAll.map(x=>`<div style="border:1px solid #fecaca;background:#fff5f5;padding:10px;border-radius:8px;margin-bottom:6px;font-size:13px;line-height:1.6;">
+                <div style="color:#64748b;font-size:11px;">${esc(x.date||'')}</div>
+                ${x.type?`<div><b>Type:</b> ${esc(x.type)}</div>`:''}${x.body?`<div><b>Body:</b> ${esc(x.body)}</div>`:''}${x.severity?`<div><b>Severity:</b> ${esc(x.severity)}</div>`:''}${x.desc?`<div><b>Details:</b> ${esc(x.desc)}</div>`:''}
+              </div>`).join('')
+            }</div>`:''}
+            ${(s.clinicAll||[]).length ? `<div style="margin-bottom:14px;"><div style="font-weight:700;color:#0369a1;margin-bottom:6px;"><i class="fas fa-hospital"></i> All Clinic Visits</div>${
+              s.clinicAll.map(x=>`<div style="border:1px solid #bae6fd;background:#f0f9ff;padding:10px;border-radius:8px;margin-bottom:6px;font-size:13px;line-height:1.6;">
+                <div style="color:#64748b;font-size:11px;">${esc(x.date||'')}</div>
+                ${x.complaint?`<div><b>Complaint:</b> ${esc(x.complaint)}</div>`:''}${x.diagnosis?`<div><b>Diagnosis:</b> ${esc(x.diagnosis)}</div>`:''}${x.treatment?`<div><b>Treatment:</b> ${esc(x.treatment)}</div>`:''}
+              </div>`).join('')
+            }</div>`:''}
+            ${(s.physAll||[]).length ? `<div><div style="font-weight:700;color:#15803d;margin-bottom:6px;"><i class="fas fa-stethoscope"></i> All Physical Exams</div>${
+              s.physAll.map(x=>`<div style="border:1px solid #bbf7d0;background:#f0fdf4;padding:10px;border-radius:8px;margin-bottom:6px;font-size:13px;line-height:1.6;">
+                <div style="color:#64748b;font-size:11px;">${esc(x.date||'')}</div>
+                ${x.result?`<div><b>Result:</b> ${esc(x.result)}</div>`:''}${x.status?`<div><b>Status:</b> ${esc(x.status)}</div>`:''}${x.notes?`<div><b>Notes:</b> ${esc(x.notes)}</div>`:''}
+              </div>`).join('')
+            }</div>`:''}
+          </div>
+        </details>`:''}
+
+        <div style="margin-top:16px;background:#dcfce7;border:2px solid #16a34a;border-radius:14px;padding:14px;text-align:center;">
+          <div style="font-weight:800;color:#15803d;margin-bottom:8px;font-size:14px;"><i class="fas fa-ambulance"></i> CALL AMBULANCE</div>
+          <a href="tel:123" style="display:inline-block;background:#dc2626;color:#fff;padding:14px 28px;border-radius:10px;font-size:20px;font-weight:800;text-decoration:none;"><i class="fas fa-phone"></i> 123</a>
         </div>
         <div style="margin-top:16px;background:#fff;border-radius:14px;padding:18px;box-shadow:0 4px 12px rgba(0,0,0,.05);">
           <div style="font-weight:800;color:#0f172a;margin-bottom:8px;"><i class="fas fa-phone" style="color:#dc2626;"></i> Emergency Contact</div>
