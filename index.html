@@ -19623,7 +19623,14 @@ window.toggleInjuryPrintPreview = function(){
 </script>
 
 <!-- ====================== LIVE EMERGENCY VIEW ====================== -->
-<div id="liveEmergencyView" style="display:none;position:fixed;inset:0;z-index:100000;background:#f8fafc;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:0;font-family:Inter,Arial,sans-serif;"></div>
+<div id="liveEmergencyView" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;z-index:100000;background:#f8fafc;overflow-y:scroll;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;padding:0;font-family:Inter,Arial,sans-serif;"></div>
+<style id="live-emg-scroll">
+  html:has(#liveEmergencyView[style*="display: block"]),
+  html:has(#liveEmergencyView[style*="display:block"]) { overflow: hidden !important; }
+  #liveEmergencyView { -webkit-overflow-scrolling: touch; }
+  #liveEmergencyView * { touch-action: pan-y; }
+  #liveEmergencyView .emg-header, #liveEmergencyView .emg-header * { touch-action: auto; }
+</style>
 <style id="live-emg-print">
 @media print {
   body > *:not(#liveEmergencyView) { display: none !important; }
