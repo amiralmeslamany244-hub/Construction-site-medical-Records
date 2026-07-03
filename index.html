@@ -19367,23 +19367,84 @@ window.toggleInjuryPrintPreview = function(){
     };
   };
 
+  // Encode a JS object into URL-safe base64 (UTF-8 safe)
+  function toB64Url(obj){
+    const json = JSON.stringify(obj);
+    const b64 = btoa(unescape(encodeURIComponent(json)));
+    return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+
+  // Compact snapshot embedded in the QR itself, so any scanner sees the
+  // worker's data instantly — no login, no access to this device's storage.
+  window.buildEmergencySnapshot = function(worker){
+    const phys   = (typeof workerPhysicalReports!=='undefined' && workerPhysicalReports[worker.id]) || [];
+    const clinic = (typeof workerClinicReports!=='undefined'   && workerClinicReports[worker.id])   || [];
+    const inj    = (typeof workerInjuryReports!=='undefined'   && workerInjuryReports[worker.id])   || [];
+    const pickV = (o, keys) => { for (const k of keys){ if (o && o[k]!=null && String(o[k]).trim()!=='') return String(o[k]).trim(); } return ''; };
+    const chronic = new Set(), allergies = new Set(), meds = new Set();
+    let bloodType = '';
+    const scan = arr => arr.forEach(r => {
+      const d = (r && r.data) ? r.data : {};
+      ['chronicDiseases','chronic','chronic_disease','medicalHistory','history','pastMedicalHistory'].forEach(k=>{ if(d[k]) chronic.add(String(d[k]).trim()); });
+      ['allergies','allergy','drugAllergy','foodAllergy'].forEach(k=>{ if(d[k]) allergies.add(String(d[k]).trim()); });
+      ['medications','currentMedications','medication','drugs','treatment'].forEach(k=>{ if(d[k]) meds.add(String(d[k]).trim()); });
+      const bt = pickV(d, ['bloodType','bloodGroup','blood_group']);
+      if (bt && !bloodType) bloodType = bt;
+    });
+    scan(phys); scan(clinic);
+    const lastOf = arr => {
+      if (!arr.length) return null;
+      return [...arr].sort((a,b)=>{
+        const da = new Date(a.date||(a.data&&(a.data.date||a.data.visitDate||a.data.injuryDate))||0).getTime();
+        const db = new Date(b.date||(b.data&&(b.data.date||b.data.visitDate||b.data.injuryDate))||0).getTime();
+        return db - da;
+      })[0];
+    };
+    const shrink = (entry, fieldMap) => {
+      if (!entry) return null;
+      const d = entry.data || {};
+      const out = { date: entry.date || d.date || d.visitDate || d.injuryDate || '' };
+      Object.entries(fieldMap).forEach(([k, ks]) => { const v = pickV(d, ks); if (v) out[k] = truncate(v, 120); });
+      return out;
+    };
+    return {
+      v:2, t:'eprof',
+      n:worker.name||'', id:worker.id||'', nid:worker.nationalId||worker.id||'',
+      j:worker.role||worker.job||'', dp:worker.department||'',
+      ag:worker.age||'', nt:worker.nationality||'', ph:worker.phone||'',
+      st:worker.site||worker.location||worker.projectSite||'',
+      bt:bloodType,
+      al:Array.from(allergies).filter(Boolean).slice(0,10),
+      ch:Array.from(chronic).filter(Boolean).slice(0,10),
+      md:Array.from(meds).filter(Boolean).slice(0,10),
+      lp:shrink(lastOf(phys),   { result:['result','examResult','fitnessResult'], status:['status','fitnessStatus'], notes:['notes','remarks','comment'] }),
+      lc:shrink(lastOf(clinic), { complaint:['complaint','chiefComplaint','presentComplaint'], diagnosis:['diagnosis'], treatment:['treatment','medication','prescription'] }),
+      li:shrink(lastOf(inj),    { type:['injuryType','type','natureOfInjury'], body:['bodyPart','injuryLocation'], desc:['description','howHappened','details'], severity:['severity','grade'] }),
+      ec:{ n:worker.emergencyContactName||worker.emergencyName||'', r:worker.emergencyContactRelation||worker.emergencyRelation||'', p:worker.emergencyContactPhone||worker.emergencyPhone||'' },
+      cnt:{ p:phys.length, c:clinic.length, i:inj.length },
+      g:new Date().toISOString()
+    };
+  };
+
   window.selectEqrWorker = function(id){
     const src = (typeof workers !== 'undefined' && Array.isArray(workers)) ? workers : [];
     const w = src.find(x => String(x.id) === String(id));
     if (!w) return;
     _eqrCurrentWorkerId = w.id;
-    const payload = buildEmergencyPayload(w);
+    const payload  = buildEmergencyPayload(w);
+    const snapshot = buildEmergencySnapshot(w);
 
-    // Build live URL: contains ONLY the worker ID.
-    // When scanned, the target page reads the LATEST data from storage
-    // at the moment of scanning — not a frozen snapshot.
-    const liveUrl = location.origin + location.pathname + '#emergency=' + encodeURIComponent(w.id);
+    // The full snapshot is embedded in the URL hash — the scanner sees the
+    // worker's data immediately, without logging into the domain.
+    const enc = toB64Url(snapshot);
+    const liveUrl = location.origin + location.pathname + '#e=' + enc;
 
     const box = document.getElementById('eqrQrBox');
     box.innerHTML = '';
-    new QRCode(box, { text: liveUrl, width: 260, height: 260, correctLevel: QRCode.CorrectLevel.M });
+    // Use L correction level so larger self-contained payloads still fit.
+    new QRCode(box, { text: liveUrl, width: 300, height: 300, correctLevel: QRCode.CorrectLevel.L });
     const linkBox = document.getElementById('eqrLinkBox');
-    if (linkBox) linkBox.innerHTML = '<i class="fas fa-link"></i> ' + escapeHtml(liveUrl);
+    if (linkBox) linkBox.innerHTML = '<i class="fas fa-link"></i> <span style="opacity:.75">Self-contained URL (' + enc.length + ' chars) — scanner sees data without login.</span>';
 
     const info = document.getElementById('eqrInfo');
     const injHtml = payload.injuries.length ? payload.injuries.map(i=>`<li>${escapeHtml(i.date)} — ${escapeHtml(i.type||'—')} <span style="color:var(--text-secondary);">${escapeHtml(i.body||'')}</span> ${i.desc?'<br><span style="color:var(--text-secondary);font-size:0.9em;">'+escapeHtml(i.desc)+'</span>':''}</li>`).join('') : '<li style="color:var(--text-muted);">None</li>';
@@ -19652,7 +19713,117 @@ window.toggleInjuryPrintPreview = function(){
     `;
   }
 
+  function renderFromSnapshot(s){
+    const root = document.getElementById('liveEmergencyView');
+    if (!root) return;
+    const scannedAt = new Date();
+    const pill = (label, val, color) => `
+      <div style="background:${color||'#f1f5f9'};padding:10px 14px;border-radius:10px;min-width:120px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700;">${esc(label)}</div>
+        <div style="font-size:15px;font-weight:700;color:#0f172a;margin-top:2px;">${esc(val||'—')}</div>
+      </div>`;
+    const listBlock = (title, icon, iconColor, items) => `
+      <div style="margin-top:14px;">
+        <div style="font-weight:700;color:#0f172a;margin-bottom:6px;"><i class="fas ${icon}" style="color:${iconColor};"></i> ${esc(title)}</div>
+        ${items && items.length ? '<ul style="margin:0;padding-left:20px;color:#334155;line-height:1.55;">' + items.map(x => '<li>'+esc(x)+'</li>').join('') + '</ul>' : '<div style="color:#94a3b8;font-style:italic;">None recorded</div>'}
+      </div>`;
+    const lastCardSnap = (title, entry, fields) => {
+      if (!entry) return `<div style="background:#f8fafc;padding:14px;border-radius:10px;border:1px dashed #cbd5e1;color:#94a3b8;">${esc(title)}: none on record</div>`;
+      const rows = fields.map(([label, key]) => entry[key] ? `<div><b>${esc(label)}:</b> ${esc(entry[key])}</div>` : '').join('');
+      return `<div style="background:#fff;padding:14px;border-radius:10px;border:1px solid #e2e8f0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><b style="color:#0f172a;">${esc(title)}</b><span style="color:#64748b;font-size:12px;">${esc(entry.date||'')}</span></div>
+        <div style="color:#334155;font-size:14px;line-height:1.6;">${rows || '<span style="color:#94a3b8;">No details</span>'}</div></div>`;
+    };
+    const ec = s.ec || {};
+    root.innerHTML = `
+      <div style="background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 12px rgba(0,0,0,.15);">
+        <div>
+          <div style="font-size:12px;letter-spacing:2px;opacity:.9;font-weight:700;">EMERGENCY MEDICAL INFO</div>
+          <div style="font-size:22px;font-weight:800;margin-top:2px;"><i class="fas fa-ambulance"></i> ${esc(s.n||'')}</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="window.print()" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;"><i class="fas fa-print"></i> Print</button>
+        </div>
+      </div>
+      <div style="max-width:960px;margin:20px auto;padding:0 16px;">
+        <div style="background:#fff;border-radius:14px;padding:18px;box-shadow:0 4px 12px rgba(0,0,0,.05);">
+          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+            <div style="width:88px;height:88px;border-radius:50%;background:#fee2e2;color:#b91c1c;display:flex;align-items:center;justify-content:center;font-size:36px;"><i class="fas fa-user"></i></div>
+            <div style="flex:1;min-width:220px;">
+              <div style="font-size:22px;font-weight:800;color:#0f172a;">${esc(s.n||'')}</div>
+              <div style="color:#64748b;">${esc(s.j||'')} · ${esc(s.dp||'')}</div>
+              <div style="color:#64748b;font-size:13px;margin-top:4px;">ID: <b>${esc(s.id||'')}</b> · Nationality: <b>${esc(s.nt||'—')}</b> · Age: <b>${esc(s.ag||'—')}</b></div>
+              <div style="color:#64748b;font-size:13px;">Phone: <b>${esc(s.ph||'—')}</b> · Site: <b>${esc(s.st||'—')}</b></div>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+            ${pill('Blood Type', s.bt, '#fee2e2')}
+            ${pill('Allergies', (s.al||[]).length ? (s.al.length + ' recorded') : 'None', (s.al||[]).length ? '#fef3c7':'#f1f5f9')}
+            ${pill('Chronic', (s.ch||[]).length ? (s.ch.length + ' recorded') : 'None', (s.ch||[]).length ? '#fef3c7':'#f1f5f9')}
+            ${pill('Medications', (s.md||[]).length ? (s.md.length + ' current') : 'None', (s.md||[]).length ? '#dbeafe':'#f1f5f9')}
+          </div>
+          ${listBlock('Allergies', 'fa-exclamation-triangle', '#f59e0b', s.al||[])}
+          ${listBlock('Chronic diseases', 'fa-heart-pulse', '#dc2626', s.ch||[])}
+          ${listBlock('Current medications', 'fa-pills', '#2563eb', s.md||[])}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px;">
+          ${lastCardSnap('Last Physical Exam', s.lp, [['Result','result'],['Status','status'],['Notes','notes']])}
+          ${lastCardSnap('Last Clinic Visit', s.lc, [['Complaint','complaint'],['Diagnosis','diagnosis'],['Treatment','treatment']])}
+        </div>
+        <div style="margin-top:14px;">
+          ${lastCardSnap('Last Injury Report', s.li, [['Type','type'],['Body part','body'],['Description','desc'],['Severity','severity']])}
+        </div>
+        <div style="margin-top:16px;background:#fff;border-radius:14px;padding:18px;box-shadow:0 4px 12px rgba(0,0,0,.05);">
+          <div style="font-weight:800;color:#0f172a;margin-bottom:8px;"><i class="fas fa-phone" style="color:#dc2626;"></i> Emergency Contact</div>
+          ${(ec.n || ec.p)
+            ? `<div style="color:#334155;line-height:1.7;">
+                 <div><b>${esc(ec.n||'—')}</b> ${ec.r?('· '+esc(ec.r)):''}</div>
+                 ${ec.p ? `<div><a href="tel:${esc(ec.p)}" style="color:#dc2626;font-weight:700;text-decoration:none;font-size:18px;"><i class="fas fa-phone"></i> ${esc(ec.p)}</a></div>` : ''}
+               </div>`
+            : '<div style="color:#94a3b8;font-style:italic;">No emergency contact recorded</div>'}
+        </div>
+        <div style="margin:18px 0 30px;text-align:center;color:#64748b;font-size:12px;">
+          <i class="fas fa-clock"></i> Scanned at: <b>${esc(fmtDT(scannedAt))}</b>
+          &nbsp;·&nbsp; QR generated: <b>${esc(fmtDT(s.g))}</b>
+          ${s.cnt ? `&nbsp;·&nbsp; Physical: ${s.cnt.p||0} · Clinic: ${s.cnt.c||0} · Injuries: ${s.cnt.i||0}` : ''}
+        </div>
+      </div>`;
+  }
+
+  function fromB64Url(str){
+    try {
+      const b64 = str.replace(/-/g,'+').replace(/_/g,'/') + '==='.slice((str.length + 3) % 4);
+      return JSON.parse(decodeURIComponent(escape(atob(b64))));
+    } catch(e){ return null; }
+  }
+
   function checkHash(){
+    const h = location.hash || '';
+    const view = document.getElementById('liveEmergencyView');
+    if (!view) return;
+    const mSnap = h.match(/^#e=(.+)$/);
+    const mId   = h.match(/^#emergency=(.+)$/);
+    if (mSnap){
+      const snap = fromB64Url(mSnap[1]);
+      document.body.style.overflow = 'hidden';
+      view.style.display = 'block';
+      if (snap) renderFromSnapshot(snap);
+      else view.innerHTML = '<div style="max-width:640px;margin:80px auto;padding:32px;background:#fff;border-radius:16px;text-align:center;"><h1 style="color:#b91c1c;">Invalid QR data</h1></div>';
+      return;
+    }
+    if (mId){
+      const id = decodeURIComponent(mId[1]);
+      document.body.style.overflow = 'hidden';
+      view.style.display = 'block';
+      renderLive(id);
+      return;
+    }
+    view.style.display = 'none';
+    document.body.style.overflow = '';
+    view.innerHTML = '';
+  }
+
+  function checkHashLegacy(){
     const h = location.hash || '';
     const m = h.match(/^#emergency=(.+)$/);
     const view = document.getElementById('liveEmergencyView');
