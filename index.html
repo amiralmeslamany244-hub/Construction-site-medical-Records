@@ -19407,21 +19407,58 @@ window.toggleInjuryPrintPreview = function(){
       Object.entries(fieldMap).forEach(([k, ks]) => { const v = pickV(d, ks); if (v) out[k] = truncate(v, 120); });
       return out;
     };
+    const pickVitals = () => {
+      const cand = [...phys, ...clinic].sort((a,b)=>{
+        const da=new Date(a.date||(a.data&&(a.data.date||a.data.visitDate))||0).getTime();
+        const db=new Date(b.date||(b.data&&(b.data.date||b.data.visitDate))||0).getTime();
+        return db-da;
+      });
+      let bp='', bs='';
+      for (const r of cand){
+        const d=(r&&r.data)||{};
+        if (!bp){
+          let v = pickV(d, ['blood_pressure','bloodPressure','bp']);
+          if (!v){
+            const sys = pickV(d, ['bp_systolic','systolic']);
+            const dia = pickV(d, ['bp_diastolic','diastolic']);
+            if (sys && dia) v = sys+'/'+dia;
+          }
+          if (v) bp = v;
+        }
+        if (!bs){
+          const v = pickV(d, ['rbg','blood_sugar','bloodSugar','glucose','randomBloodSugar']);
+          if (v) bs = v;
+        }
+        if (bp && bs) break;
+      }
+      return { bp, bs };
+    };
+    const vit = pickVitals();
+    const lastPhys = lastOf(phys), lastClin = lastOf(clinic), lastInj = lastOf(inj);
+    const dateOf = e => e ? (e.date || (e.data&&(e.data.date||e.data.visitDate||e.data.injuryDate)) || '') : '';
+    const allDates = [...phys, ...clinic, ...inj].map(dateOf).filter(Boolean).map(d=>new Date(d).getTime()).filter(t=>!isNaN(t));
+    const updated = allDates.length ? new Date(Math.max(...allDates)).toISOString() : '';
+    const fitness = lastPhys ? pickV(lastPhys.data||{}, ['fitnessStatus','status','fitnessResult','result']) : '';
     return {
-      v:2, t:'eprof',
+      v:3, t:'eprof',
       n:worker.name||'', id:worker.id||'', nid:worker.nationalId||worker.id||'',
-      j:worker.role||worker.job||'', dp:worker.department||'',
+      co:worker.company||'',
+      j:worker.role||worker.job||'', jt:worker.jobTitle||worker.role||worker.job||'', dp:worker.department||'',
       ag:worker.age||'', nt:worker.nationality||'', ph:worker.phone||'',
       st:worker.site||worker.location||worker.projectSite||'',
       bt:bloodType,
+      mfs:fitness,
+      bp:vit.bp, bs:vit.bs,
+      lme:dateOf(lastPhys), lcv:dateOf(lastClin), lid:dateOf(lastInj),
       al:Array.from(allergies).filter(Boolean).slice(0,10),
       ch:Array.from(chronic).filter(Boolean).slice(0,10),
       md:Array.from(meds).filter(Boolean).slice(0,10),
-      lp:shrink(lastOf(phys),   { result:['result','examResult','fitnessResult'], status:['status','fitnessStatus'], notes:['notes','remarks','comment'] }),
-      lc:shrink(lastOf(clinic), { complaint:['complaint','chiefComplaint','presentComplaint'], diagnosis:['diagnosis'], treatment:['treatment','medication','prescription'] }),
-      li:shrink(lastOf(inj),    { type:['injuryType','type','natureOfInjury'], body:['bodyPart','injuryLocation'], desc:['description','howHappened','details'], severity:['severity','grade'] }),
+      lp:shrink(lastPhys,  { result:['result','examResult','fitnessResult'], status:['status','fitnessStatus'], notes:['notes','remarks','comment'] }),
+      lc:shrink(lastClin,  { complaint:['complaint','chiefComplaint','presentComplaint'], diagnosis:['diagnosis'], treatment:['treatment','medication','prescription'] }),
+      li:shrink(lastInj,   { type:['injuryType','type','natureOfInjury'], body:['bodyPart','injuryLocation'], desc:['description','howHappened','details'], severity:['severity','grade'] }),
       ec:{ n:worker.emergencyContactName||worker.emergencyName||'', r:worker.emergencyContactRelation||worker.emergencyRelation||'', p:worker.emergencyContactPhone||worker.emergencyPhone||'' },
       cnt:{ p:phys.length, c:clinic.length, i:inj.length },
+      upd:updated,
       g:new Date().toISOString()
     };
   };
@@ -19854,6 +19891,278 @@ window.toggleInjuryPrintPreview = function(){
 <!-- ====================== /LIVE EMERGENCY VIEW ====================== -->
 <!-- ====================== /SMART EMERGENCY QR ====================== -->
 
+
+
+<!-- ====================== EMERGENCY SCAN LANDING (#e=...) ====================== -->
+<div id="emergencyScanView" style="display:none;"></div>
+<style>
+  body.emergency-scan-mode > *:not(#emergencyScanView){ display:none !important; }
+  body.emergency-scan-mode{ background:#f1f5f9 !important; margin:0; }
+  #emergencyScanView{
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+    color:#0f172a; min-height:100vh; padding:0 0 32px;
+    -webkit-font-smoothing:antialiased;
+  }
+  #emergencyScanView .eqv-wrap{ max-width:640px; margin:0 auto; padding:0 14px; }
+  #emergencyScanView .eqv-head{
+    position:sticky; top:0; z-index:5;
+    background:linear-gradient(135deg,#dc2626,#991b1b);
+    color:#fff; padding:18px 18px 16px; box-shadow:0 4px 14px rgba(153,27,27,.35);
+  }
+  #emergencyScanView .eqv-head .eqv-brand{ display:flex; align-items:center; gap:12px; font-weight:800; font-size:1.05rem; letter-spacing:.4px; text-transform:uppercase; opacity:.95; }
+  #emergencyScanView .eqv-head .eqv-brand i{ font-size:1.4rem; }
+  #emergencyScanView .eqv-head h1{ margin:8px 0 2px; font-size:1.55rem; font-weight:800; line-height:1.15; }
+  #emergencyScanView .eqv-head .eqv-sub{ font-size:.85rem; opacity:.9; }
+  #emergencyScanView .eqv-card{
+    background:#fff; border-radius:14px; padding:14px 16px; margin-top:14px;
+    box-shadow:0 1px 3px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
+    border:1px solid #e2e8f0;
+  }
+  #emergencyScanView .eqv-card h2{
+    margin:0 0 10px; font-size:.72rem; font-weight:700; letter-spacing:1.2px;
+    text-transform:uppercase; color:#64748b; display:flex; align-items:center; gap:8px;
+  }
+  #emergencyScanView .eqv-card h2 i{ color:#dc2626; }
+  #emergencyScanView .eqv-row{ display:flex; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px dashed #e2e8f0; font-size:.94rem; }
+  #emergencyScanView .eqv-row:last-child{ border-bottom:0; }
+  #emergencyScanView .eqv-row .k{ color:#64748b; font-weight:500; }
+  #emergencyScanView .eqv-row .v{ color:#0f172a; font-weight:600; text-align:right; max-width:60%; word-break:break-word; }
+  #emergencyScanView .eqv-pills{ display:flex; gap:10px; flex-wrap:wrap; }
+  #emergencyScanView .eqv-pill{
+    display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:999px;
+    font-weight:700; font-size:.95rem; background:#f1f5f9; color:#334155;
+  }
+  #emergencyScanView .eqv-pill.blood{ background:#fee2e2; color:#991b1b; font-size:1.15rem; padding:10px 18px; }
+  #emergencyScanView .eqv-pill.ok{ background:#dcfce7; color:#166534; }
+  #emergencyScanView .eqv-pill.warn{ background:#fef3c7; color:#92400e; }
+  #emergencyScanView .eqv-pill.danger{ background:#fee2e2; color:#991b1b; }
+  #emergencyScanView .eqv-alert{
+    background:#fef2f2; border:1px solid #fecaca; color:#991b1b;
+    padding:10px 12px; border-radius:10px; font-weight:600; font-size:.92rem;
+    display:flex; align-items:flex-start; gap:8px; margin-top:8px;
+  }
+  #emergencyScanView .eqv-alert i{ margin-top:2px; }
+  #emergencyScanView .eqv-vitals{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  #emergencyScanView .eqv-vital{
+    background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px;
+  }
+  #emergencyScanView .eqv-vital .k{ font-size:.7rem; text-transform:uppercase; letter-spacing:.8px; color:#64748b; font-weight:700; }
+  #emergencyScanView .eqv-vital .v{ font-size:1.15rem; font-weight:800; margin-top:2px; color:#0f172a; }
+  #emergencyScanView .eqv-vital.ok .v{ color:#166534; }
+  #emergencyScanView .eqv-vital.warn .v{ color:#92400e; }
+  #emergencyScanView .eqv-vital.danger .v{ color:#991b1b; }
+  #emergencyScanView .eqv-contact{
+    display:flex; align-items:center; gap:12px; padding:12px; background:#fff7ed;
+    border:1px solid #fed7aa; border-radius:12px; text-decoration:none; color:#9a3412; font-weight:700;
+  }
+  #emergencyScanView .eqv-contact i{ font-size:1.5rem; color:#ea580c; }
+  #emergencyScanView .eqv-contact .name{ font-size:.85rem; color:#7c2d12; font-weight:600; }
+  #emergencyScanView .eqv-contact .phone{ font-size:1.1rem; }
+  #emergencyScanView .eqv-stats{ display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:14px; }
+  #emergencyScanView .eqv-stat{
+    background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:10px 6px; text-align:center;
+    box-shadow:0 1px 2px rgba(15,23,42,.04);
+  }
+  #emergencyScanView .eqv-stat .n{ font-size:1.35rem; font-weight:800; color:#0f4c75; line-height:1; }
+  #emergencyScanView .eqv-stat .l{ font-size:.65rem; text-transform:uppercase; color:#64748b; margin-top:4px; letter-spacing:.5px; font-weight:600; }
+  #emergencyScanView .eqv-stat.updated .n{ font-size:.85rem; color:#0f172a; }
+  #emergencyScanView .eqv-cta{
+    display:block; text-align:center; margin-top:18px; padding:16px;
+    background:linear-gradient(135deg,#0f4c75,#3282b8); color:#fff; text-decoration:none;
+    border-radius:14px; font-weight:700; font-size:1rem; letter-spacing:.3px;
+    box-shadow:0 6px 16px rgba(15,76,117,.35); border:0; width:100%; cursor:pointer;
+  }
+  #emergencyScanView .eqv-cta i{ margin-right:8px; }
+  #emergencyScanView .eqv-foot{ text-align:center; font-size:.72rem; color:#94a3b8; margin-top:14px; padding:0 8px; }
+  @media (max-width:420px){
+    #emergencyScanView .eqv-stats{ grid-template-columns:repeat(2,1fr); }
+    #emergencyScanView .eqv-vitals{ grid-template-columns:1fr; }
+    #emergencyScanView .eqv-head h1{ font-size:1.35rem; }
+  }
+</style>
+<script>
+(function(){
+  function fromB64Url(s){
+    try{
+      s = String(s).replace(/-/g,'+').replace(/_/g,'/');
+      while (s.length % 4) s += '=';
+      return decodeURIComponent(escape(atob(s)));
+    } catch(e){ return null; }
+  }
+  function esc(v){ return String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function dash(v){ v = (v==null?'':String(v)).trim(); return v || '—'; }
+  function fmtDate(v){
+    if (!v) return '—';
+    const d = new Date(v); if (isNaN(d.getTime())) return esc(v);
+    return d.toISOString().slice(0,10);
+  }
+  function bpClass(bp){
+    if (!bp) return '';
+    const m = String(bp).match(/(\d{2,3})\s*\/\s*(\d{2,3})/);
+    if (!m) return '';
+    const s=+m[1], d=+m[2];
+    if (s>=140 || d>=90) return 'danger';
+    if (s>=130 || d>=85 || s<90) return 'warn';
+    return 'ok';
+  }
+  function bsClass(bs){
+    if (!bs) return '';
+    const n = parseFloat(String(bs).replace(/[^\d.]/g,''));
+    if (isNaN(n)) return '';
+    if (n<70 || n>=200) return 'danger';
+    if (n>=140) return 'warn';
+    return 'ok';
+  }
+  function fitClass(s){
+    const t=(s||'').toLowerCase();
+    if (!t) return '';
+    if (/(unfit|danger|sick|not fit|fail)/.test(t)) return 'danger';
+    if (/(observ|warn|condition|restrict|temporar)/.test(t)) return 'warn';
+    if (/(fit|active|healthy|pass|clear)/.test(t)) return 'ok';
+    return '';
+  }
+  function joinList(arr){
+    if (!Array.isArray(arr) || !arr.length) return '';
+    return arr.join(' • ');
+  }
+  function render(p){
+    const view = document.getElementById('emergencyScanView');
+    const bpCls = bpClass(p.bp);
+    const bsCls = bsClass(p.bs);
+    const fitCls = fitClass(p.mfs);
+    const allergyItems = (p.al&&p.al.length) ? p.al : [];
+    const chronicItems = (p.ch&&p.ch.length) ? p.ch : [];
+    const medItems     = (p.md&&p.md.length) ? p.md : [];
+    const cnt = p.cnt || {};
+    const ec = p.ec || {};
+    view.innerHTML = `
+      <div class="eqv-head">
+        <div class="eqv-wrap">
+          <div class="eqv-brand"><i class="fas fa-ambulance"></i> Emergency Medical Profile</div>
+          <h1>${esc(p.n||'Unknown Worker')}</h1>
+          <div class="eqv-sub"><i class="fas fa-id-card"></i> ${esc(dash(p.id))} ${p.co?'· <i class="fas fa-industry"></i> '+esc(p.co):''}</div>
+        </div>
+      </div>
+      <div class="eqv-wrap">
+
+        <div class="eqv-card">
+          <div class="eqv-pills">
+            <span class="eqv-pill blood"><i class="fas fa-tint"></i> ${esc(dash(p.bt))}</span>
+            ${p.mfs?`<span class="eqv-pill ${fitCls}"><i class="fas fa-heart-pulse"></i> ${esc(p.mfs)}</span>`:''}
+          </div>
+        </div>
+
+        <div class="eqv-card">
+          <h2><i class="fas fa-user"></i> Identity</h2>
+          <div class="eqv-row"><span class="k">Employee ID</span><span class="v">${esc(dash(p.id))}</span></div>
+          <div class="eqv-row"><span class="k">Company</span><span class="v">${esc(dash(p.co))}</span></div>
+          <div class="eqv-row"><span class="k">Job Title</span><span class="v">${esc(dash(p.jt||p.j))}</span></div>
+          <div class="eqv-row"><span class="k">Nationality</span><span class="v">${esc(dash(p.nt))}</span></div>
+        </div>
+
+        <div class="eqv-card">
+          <h2><i class="fas fa-triangle-exclamation"></i> Critical Medical</h2>
+          <div class="eqv-row"><span class="k">Chronic Diseases</span><span class="v">${esc(dash(joinList(chronicItems)))}</span></div>
+          ${allergyItems.length?`<div class="eqv-alert"><i class="fas fa-syringe"></i><div><b>Drug Allergies:</b> ${esc(allergyItems.join(', '))}</div></div>`:`<div class="eqv-row"><span class="k">Drug Allergies</span><span class="v">—</span></div>`}
+          <div class="eqv-row"><span class="k">Current Medications</span><span class="v">${esc(dash(joinList(medItems)))}</span></div>
+        </div>
+
+        <div class="eqv-card">
+          <h2><i class="fas fa-chart-line"></i> Latest Vitals</h2>
+          <div class="eqv-vitals">
+            <div class="eqv-vital ${bpCls}"><div class="k">Blood Pressure</div><div class="v">${esc(dash(p.bp))} <span style="font-size:.7rem;font-weight:500;color:#64748b;">${p.bp?'mmHg':''}</span></div></div>
+            <div class="eqv-vital ${bsCls}"><div class="k">Blood Sugar</div><div class="v">${esc(dash(p.bs))} <span style="font-size:.7rem;font-weight:500;color:#64748b;">${p.bs?'mg/dL':''}</span></div></div>
+          </div>
+          <div class="eqv-row" style="margin-top:8px;"><span class="k">Last Medical Exam</span><span class="v">${fmtDate(p.lme)}</span></div>
+          <div class="eqv-row"><span class="k">Last Clinic Visit</span><span class="v">${fmtDate(p.lcv)}</span></div>
+        </div>
+
+        <div class="eqv-card">
+          <h2><i class="fas fa-user-injured"></i> Injuries</h2>
+          <div class="eqv-row"><span class="k">Total Injury Reports</span><span class="v">${esc(String(cnt.i||0))}</span></div>
+          <div class="eqv-row"><span class="k">Last Injury Date</span><span class="v">${fmtDate(p.lid)}</span></div>
+        </div>
+
+        <div class="eqv-card">
+          <h2><i class="fas fa-phone-volume"></i> Emergency Contact</h2>
+          ${ec.p?`<a class="eqv-contact" href="tel:${esc(String(ec.p).replace(/[^\d+]/g,''))}">
+            <i class="fas fa-phone"></i>
+            <div>
+              <div class="name">${esc(dash(ec.n))} ${ec.r?'· '+esc(ec.r):''}</div>
+              <div class="phone">${esc(ec.p)}</div>
+            </div>
+          </a>`:`
+            <div class="eqv-row"><span class="k">Name</span><span class="v">${esc(dash(ec.n))}</span></div>
+            <div class="eqv-row"><span class="k">Phone</span><span class="v">—</span></div>
+          `}
+        </div>
+
+        <div class="eqv-stats">
+          <div class="eqv-stat"><div class="n">${esc(String(cnt.p||0))}</div><div class="l">Medical<br>Records</div></div>
+          <div class="eqv-stat"><div class="n">${esc(String(cnt.c||0))}</div><div class="l">Clinic<br>Visits</div></div>
+          <div class="eqv-stat"><div class="n">${esc(String(cnt.i||0))}</div><div class="l">Injury<br>Reports</div></div>
+          <div class="eqv-stat updated"><div class="n">${fmtDate(p.upd||p.g)}</div><div class="l">Last<br>Updated</div></div>
+        </div>
+
+        <button class="eqv-cta" onclick="window.__eqvOpenFull&&window.__eqvOpenFull()">
+          <i class="fas fa-file-medical"></i> View Full Medical Record
+        </button>
+
+        <div class="eqv-foot">
+          Snapshot generated ${fmtDate(p.g)} · Data shown from QR payload (no server lookup).
+        </div>
+      </div>
+    `;
+  }
+  function renderError(msg){
+    const view = document.getElementById('emergencyScanView');
+    view.innerHTML = `
+      <div class="eqv-head"><div class="eqv-wrap">
+        <div class="eqv-brand"><i class="fas fa-ambulance"></i> Emergency Profile</div>
+        <h1>Unable to read QR</h1>
+      </div></div>
+      <div class="eqv-wrap"><div class="eqv-card">
+        <div class="eqv-alert"><i class="fas fa-circle-xmark"></i><div>${esc(msg||'The scanned link is invalid or expired.')}</div></div>
+        <button class="eqv-cta" onclick="window.__eqvOpenFull&&window.__eqvOpenFull()"><i class="fas fa-arrow-right"></i> Open Application</button>
+      </div></div>`;
+  }
+  window.__eqvOpenFull = function(){
+    const workerId = (window.__eqvCurrentId||'');
+    const url = location.origin + location.pathname + (workerId?('?openWorker='+encodeURIComponent(workerId)):'');
+    location.replace(url);
+  };
+  window.renderEmergencyFromHash = function(){
+    const h = location.hash || '';
+    const m = h.match(/^#e=(.+)$/);
+    if (!m){
+      document.body.classList.remove('emergency-scan-mode');
+      const v = document.getElementById('emergencyScanView');
+      if (v){ v.style.display='none'; v.innerHTML=''; }
+      return false;
+    }
+    document.body.classList.add('emergency-scan-mode');
+    const v = document.getElementById('emergencyScanView');
+    v.style.display='block';
+    const json = fromB64Url(m[1]);
+    if (!json){ renderError('Could not decode the emergency payload.'); return true; }
+    let p;
+    try { p = JSON.parse(json); } catch(e){ renderError('Emergency payload is not valid JSON.'); return true; }
+    if (!p || (p.t && p.t!=='eprof' && p.type!=='emergency_profile')){
+      renderError('This QR does not contain an emergency profile.'); return true;
+    }
+    window.__eqvCurrentId = p.id || '';
+    try { render(p); } catch(e){ renderError('Rendering failed: '+e.message); }
+    return true;
+  };
+  window.addEventListener('hashchange', window.renderEmergencyFromHash);
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', window.renderEmergencyFromHash);
+  } else {
+    window.renderEmergencyFromHash();
+  }
+})();
+</script>
+<!-- ====================== /EMERGENCY SCAN LANDING ====================== -->
 
 </body>
 </html>
