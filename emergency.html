@@ -80,11 +80,51 @@
           : '<div class="muted">None recorded</div>')
       + '</div>';
   }
-  function lastCard(title, entry, fields){
-    if (!entry) return '<div class="none">'+esc(title)+': none on record</div>';
-    var rows = fields.map(function(f){ var v = entry[f[1]]; return v ? '<div><b>'+esc(f[0])+':</b> '+esc(v)+'</div>' : ''; }).filter(Boolean).join('');
-    return '<div class="last"><div class="hd"><span>'+esc(title)+'</span><span class="sub" style="font-size:12px;font-weight:600;">'+esc(fmtD(entry.date)||'')+'</span></div><div class="body">'+(rows || '<span class="muted">No details recorded</span>')+'</div></div>';
+  // Friendly labels for known keys (supports multiple naming conventions from the QR generator)
+  var FIELD_LABELS = {
+    result:'Result', status:'Status', notes:'Notes', note:'Notes', remarks:'Remarks',
+    complaint:'Complaint', symptoms:'Symptoms', diagnosis:'Diagnosis', treatment:'Treatment',
+    medication:'Medication', medications:'Medications', prescription:'Prescription',
+    doctor:'Doctor', physician:'Physician', clinic:'Clinic', hospital:'Hospital',
+    type:'Type', body:'Body Part', bodyPart:'Body Part', part:'Body Part',
+    desc:'Description', description:'Description', details:'Details',
+    severity:'Severity', cause:'Cause', location:'Location', site:'Site',
+    outcome:'Outcome', followup:'Follow-up', follow_up:'Follow-up',
+    reportId:'Report ID', id:'Report ID', ref:'Reference', refNo:'Reference',
+    bp:'Blood Pressure', bs:'Blood Sugar', hr:'Heart Rate', temp:'Temperature', weight:'Weight', height:'Height'
+  };
+  function humanize(k){ return FIELD_LABELS[k] || k.replace(/[_-]+/g,' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/^./, function(c){return c.toUpperCase();}); }
+  function fmtVal(v){
+    if (v == null || v === '') return '';
+    if (Array.isArray(v)) return v.map(function(x){ return typeof x==='object' ? JSON.stringify(x) : String(x); }).join(', ');
+    if (typeof v === 'object') {
+      return Object.keys(v).map(function(k){ var vv = v[k]; return (vv==null||vv==='')?'':(humanize(k)+': '+(typeof vv==='object'?JSON.stringify(vv):String(vv))); }).filter(Boolean).join(' · ');
+    }
+    return String(v);
   }
+  function lastCard(title, entry){
+    if (!entry || (typeof entry === 'object' && !Array.isArray(entry) && Object.keys(entry).length === 0)) {
+      return '<div class="none">'+esc(title)+': none on record</div>';
+    }
+    // Support array of reports: show most recent (first) with a count
+    var count = 0, item = entry;
+    if (Array.isArray(entry)) { count = entry.length; item = entry[0] || {}; }
+    if (typeof item !== 'object') item = { details: item };
+
+    var dateVal = item.date || item.d || item.when || item.createdAt || item.created_at || item.reportedAt || '';
+    var skipKeys = {date:1,d:1,when:1,createdAt:1,created_at:1,reportedAt:1};
+    var rows = Object.keys(item).map(function(k){
+      if (skipKeys[k]) return '';
+      var v = fmtVal(item[k]);
+      return v ? '<div><b>'+esc(humanize(k))+':</b> '+esc(v)+'</div>' : '';
+    }).filter(Boolean).join('');
+
+    var badge = count > 1 ? ' <span class="sub" style="font-size:11px;">('+count+' reports)</span>' : '';
+    return '<div class="last"><div class="hd"><span>'+esc(title)+badge+'</span>'
+      + '<span class="sub" style="font-size:12px;font-weight:600;">'+esc(fmtD(dateVal)||'')+'</span></div>'
+      + '<div class="body">'+(rows || '<span class="muted">No details recorded</span>')+'</div></div>';
+  }
+
   function statBox(n, l){
     return '<div class="stat"><div class="n">'+esc(n||'—')+'</div><div class="l">'+esc(l)+'</div></div>';
   }
@@ -148,26 +188,30 @@
       +   listBlock('💊 Current Medications', s.md||[], 'med-list')
       + '</div>';
 
-    // Medical history
+    // Medical history — accept multiple key names from the reports source
+    var lp = s.lp || s.lastPhysical || s.physical || s.exams || s.pe;
+    var lc = s.lc || s.lastClinic   || s.clinic   || s.visits || s.cv;
+    var li = s.li || s.lastInjury   || s.injury   || s.injuries || s.ir;
     var history =
         '<div class="card">'
       +   '<h2><span class="ico">📋</span> Medical History</h2>'
       +   '<div class="grid2">'
-      +     lastCard('Last Physical Exam', s.lp, [['Result','result'],['Status','status'],['Notes','notes']])
-      +     lastCard('Last Clinic Visit',  s.lc, [['Complaint','complaint'],['Diagnosis','diagnosis'],['Treatment','treatment']])
+      +     lastCard('Last Physical Exam', lp)
+      +     lastCard('Last Clinic Visit',  lc)
       +   '</div>'
       +   '<div style="margin-top:14px;">'
-      +     lastCard('Last Injury Report', s.li, [['Type','type'],['Body part','body'],['Description','desc'],['Severity','severity']])
+      +     lastCard('Last Injury Report', li)
       +   '</div>'
       +   '<div class="stats">'
-      +     statBox(cnt.p!=null?String(cnt.p):'', 'Physical Exams')
-      +     statBox(cnt.c!=null?String(cnt.c):'', 'Clinic Visits')
-      +     statBox(cnt.i!=null?String(cnt.i):'', 'Injuries')
+      +     statBox(cnt.p!=null?String(cnt.p):(Array.isArray(lp)?String(lp.length):''), 'Physical Exams')
+      +     statBox(cnt.c!=null?String(cnt.c):(Array.isArray(lc)?String(lc.length):''), 'Clinic Visits')
+      +     statBox(cnt.i!=null?String(cnt.i):(Array.isArray(li)?String(li.length):''), 'Injuries')
       +     statBox(fmtD(s.lme), 'Last Exam')
       +     statBox(fmtD(s.lcv), 'Last Visit')
       +     statBox(fmtD(s.lid), 'Last Injury')
       +   '</div>'
       + '</div>';
+
 
     var footer =
         '<div class="foot">'
