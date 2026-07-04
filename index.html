@@ -12819,7 +12819,7 @@ function openImageViewer(src, title) {
     imageViewerOffsetY = 0;
     imageViewerApplyTransform();
     modal.classList.add('show');
-    document.body.style.overflow = 'hidden';
+    document.body.style.overflow = '';document.documentElement.style.overflow='';
 }
 
 function closeImageViewer() {
@@ -19623,13 +19623,15 @@ window.toggleInjuryPrintPreview = function(){
 </script>
 
 <!-- ====================== LIVE EMERGENCY VIEW ====================== -->
-<div id="liveEmergencyView" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;z-index:100000;background:#f8fafc;overflow-y:scroll;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;touch-action:pan-y;padding:0;font-family:Inter,Arial,sans-serif;"></div>
+<div id="liveEmergencyView" style="display:none;position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;z-index:100000;background:#f8fafc;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:0;font-family:Inter,Arial,sans-serif;"></div>
 <style id="live-emg-scroll">
+  #liveEmergencyView { -webkit-overflow-scrolling: touch !important; overflow-y: auto !important; overflow-x: hidden !important; height: 100dvh !important; max-height: 100dvh !important; touch-action: pan-y !important; }
+  #liveEmergencyView, #liveEmergencyView * { -webkit-overflow-scrolling: touch; }
+  /* Never lock html/body while emergency view is open */
   html:has(#liveEmergencyView[style*="display: block"]),
-  html:has(#liveEmergencyView[style*="display:block"]) { overflow: hidden !important; }
-  #liveEmergencyView { -webkit-overflow-scrolling: touch; }
-  #liveEmergencyView * { touch-action: pan-y; }
-  #liveEmergencyView .emg-header, #liveEmergencyView .emg-header * { touch-action: auto; }
+  html:has(#liveEmergencyView[style*="display:block"]),
+  body:has(#liveEmergencyView[style*="display: block"]),
+  body:has(#liveEmergencyView[style*="display:block"]) { overflow: auto !important; height: auto !important; position: static !important; }
 </style>
 <style id="live-emg-print">
 @media print {
@@ -19935,7 +19937,7 @@ window.toggleInjuryPrintPreview = function(){
     const mId   = h.match(/^#emergency=(.+)$/);
     if (mSnap){
       const snap = fromB64Url(mSnap[1]);
-      document.body.style.overflow = 'hidden';
+      document.body.style.overflow = '';document.documentElement.style.overflow='';
       view.style.display = 'block';
       if (snap) renderFromSnapshot(snap);
       else view.innerHTML = '<div style="max-width:640px;margin:80px auto;padding:32px;background:#fff;border-radius:16px;text-align:center;"><h1 style="color:#b91c1c;">Invalid QR data</h1></div>';
@@ -19943,7 +19945,7 @@ window.toggleInjuryPrintPreview = function(){
     }
     if (mId){
       const id = decodeURIComponent(mId[1]);
-      document.body.style.overflow = 'hidden';
+      document.body.style.overflow = '';document.documentElement.style.overflow='';
       view.style.display = 'block';
       renderLive(id);
       return;
@@ -19960,7 +19962,7 @@ window.toggleInjuryPrintPreview = function(){
     if (!view) return;
     if (m){
       const id = decodeURIComponent(m[1]);
-      document.body.style.overflow = 'hidden';
+      document.body.style.overflow = '';document.documentElement.style.overflow='';
       view.style.display = 'block';
       renderLive(id);
     } else {
