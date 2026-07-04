@@ -19519,7 +19519,7 @@ window.toggleInjuryPrintPreview = function(){
     // The full snapshot is embedded in the URL hash — the scanner sees the
     // worker's data immediately, without logging into the domain.
     const enc = toB64Url(snapshot);
-    const liveUrl = location.origin + location.pathname + '#e=' + enc;
+    const __base = location.pathname.replace(/[^/]*$/, ''); const liveUrl = location.origin + __base + 'emergency.html#e=' + enc;
 
     const box = document.getElementById('eqrQrBox');
     box.innerHTML = '';
@@ -19579,7 +19579,7 @@ window.toggleInjuryPrintPreview = function(){
       try {
         const snapshot = buildEmergencySnapshot(w);
         const enc = toB64Url(snapshot);
-        const liveUrl = location.origin + location.pathname + '#e=' + enc;
+        const __base = location.pathname.replace(/[^/]*$/, ''); const liveUrl = location.origin + __base + 'emergency.html#e=' + enc;
         const holder = document.createElement('div');
         stage.appendChild(holder);
         new QRCode(holder, { text: liveUrl, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.L });

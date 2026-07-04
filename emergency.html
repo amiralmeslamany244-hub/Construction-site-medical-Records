@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emergency Medical Info</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:#f1f5f9;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,Cantarell,Arial,sans-serif;min-height:100%}
+  a{color:inherit}
+  .emg-header{background:linear-gradient(135deg,#dc2626,#7f1d1d);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 12px rgba(0,0,0,.15);position:sticky;top:0;z-index:5;gap:12px;flex-wrap:wrap}
+  .emg-header .lbl{font-size:12px;letter-spacing:2px;opacity:.9;font-weight:700}
+  .emg-header .nm{font-size:22px;font-weight:800;margin-top:2px}
+  .btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.35);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px}
+  .wrap{max-width:960px;margin:20px auto;padding:0 16px}
+  .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 4px 12px rgba(0,0,0,.05);margin-top:14px}
+  .pills{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+  .pill{padding:10px 14px;border-radius:10px;min-width:120px}
+  .pill .k{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700}
+  .pill .v{font-size:15px;font-weight:700;color:#0f172a;margin-top:2px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+  @media (max-width:640px){ .grid2{grid-template-columns:1fr} }
+  ul{padding-left:20px;color:#334155;line-height:1.55}
+  .muted{color:#94a3b8;font-style:italic}
+  .avatar{width:88px;height:88px;border-radius:50%;background:#fee2e2;color:#b91c1c;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800}
+  .row{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  .foot{margin:18px 0 30px;text-align:center;color:#64748b;font-size:12px}
+  .sub{color:#64748b}
+  .last{background:#fff;padding:14px;border-radius:10px;border:1px solid #e2e8f0}
+  .last .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;color:#0f172a;font-weight:700}
+  .last .body{color:#334155;font-size:14px;line-height:1.6}
+  .none{background:#f8fafc;padding:14px;border-radius:10px;border:1px dashed #cbd5e1;color:#94a3b8}
+  .telbtn{color:#dc2626;font-weight:700;text-decoration:none;font-size:18px}
+  @media print{ .no-print{display:none !important} body{background:#fff} .emg-header{position:static} }
+</style>
+</head>
+<body>
+<div id="root"><div class="wrap"><div class="card" style="text-align:center;padding:40px;color:#64748b;">Loading emergency info…</div></div></div>
+<script>
+(function(){
+  var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);}); };
+  var fmtDT = function(d){ try{ return new Date(d).toLocaleString('en-GB'); } catch(_){ return String(d||''); } };
+
+  function fromB64Url(str){
+    try {
+      var b64 = str.replace(/-/g,'+').replace(/_/g,'/') + '==='.slice((str.length + 3) % 4);
+      return JSON.parse(decodeURIComponent(escape(atob(b64))));
+    } catch(e){ return null; }
+  }
+
+  function pill(label, val, color){
+    return '<div class="pill" style="background:'+(color||'#f1f5f9')+';"><div class="k">'+esc(label)+'</div><div class="v">'+esc(val||'—')+'</div></div>';
+  }
+  function listBlock(title, items){
+    return '<div style="margin-top:14px;"><div style="font-weight:700;color:#0f172a;margin-bottom:6px;">'+esc(title)+'</div>'
+      + ((items && items.length)
+          ? '<ul>' + items.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('') + '</ul>'
+          : '<div class="muted">None recorded</div>')
+      + '</div>';
+  }
+  function lastCard(title, entry, fields){
+    if (!entry) return '<div class="none">'+esc(title)+': none on record</div>';
+    var rows = fields.map(function(f){ var v = entry[f[1]]; return v ? '<div><b>'+esc(f[0])+':</b> '+esc(v)+'</div>' : ''; }).join('');
+    return '<div class="last"><div class="hd"><span>'+esc(title)+'</span><span class="sub" style="font-size:12px;">'+esc(entry.date||'')+'</span></div><div class="body">'+(rows || '<span class="muted">No details</span>')+'</div></div>';
+  }
+
+  function renderInvalid(msg){
+    document.getElementById('root').innerHTML =
+      '<div class="wrap"><div class="card" style="text-align:center;padding:40px;">'
+      + '<div style="font-size:48px;color:#b91c1c;">⚠️</div>'
+      + '<h1 style="margin-top:12px;color:#0f172a;">'+esc(msg||'Invalid QR data')+'</h1>'
+      + '<p style="color:#64748b;margin-top:8px;">This QR does not contain valid emergency data.</p>'
+      + '</div></div>';
+  }
+
+  function render(s){
+    var ec = s.ec || {};
+    var scannedAt = new Date();
+    document.title = 'Emergency Info - ' + (s.n || 'Worker');
+    document.getElementById('root').innerHTML =
+      '<div class="emg-header">'
+      +   '<div><div class="lbl">EMERGENCY MEDICAL INFO</div><div class="nm">🚑 '+esc(s.n||'')+'</div></div>'
+      +   '<div class="no-print" style="display:flex;gap:8px;">'
+      +     '<button class="btn" onclick="window.print()">Print</button>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="wrap">'
+      +   '<div class="card">'
+      +     '<div class="row">'
+      +       '<div class="avatar">'+esc((s.n||'?').charAt(0).toUpperCase())+'</div>'
+      +       '<div style="flex:1;min-width:220px;">'
+      +         '<div style="font-size:22px;font-weight:800;">'+esc(s.n||'')+'</div>'
+      +         '<div class="sub">'+esc(s.j||'')+(s.dp?(' · '+esc(s.dp)):'')+'</div>'
+      +         '<div class="sub" style="font-size:13px;margin-top:4px;">ID: <b>'+esc(s.id||'')+'</b> · Nationality: <b>'+esc(s.nt||'—')+'</b> · Age: <b>'+esc(s.ag||'—')+'</b></div>'
+      +         '<div class="sub" style="font-size:13px;">Phone: <b>'+esc(s.ph||'—')+'</b> · Site: <b>'+esc(s.st||'—')+'</b></div>'
+      +       '</div>'
+      +     '</div>'
+      +     '<div class="pills">'
+      +       pill('Blood Type', s.bt, '#fee2e2')
+      +       + pill('Allergies', (s.al||[]).length ? ((s.al.length)+' recorded') : 'None', (s.al||[]).length ? '#fef3c7':'#f1f5f9')
+      +       + pill('Chronic', (s.ch||[]).length ? ((s.ch.length)+' recorded') : 'None', (s.ch||[]).length ? '#fef3c7':'#f1f5f9')
+      +       + pill('Medications', (s.md||[]).length ? ((s.md.length)+' current') : 'None', (s.md||[]).length ? '#dbeafe':'#f1f5f9')
+      +     '</div>'
+      +     listBlock('Allergies', s.al||[])
+      +     + listBlock('Chronic diseases', s.ch||[])
+      +     + listBlock('Current medications', s.md||[])
+      +   '</div>'
+      +   '<div class="grid2">'
+      +     lastCard('Last Physical Exam', s.lp, [['Result','result'],['Status','status'],['Notes','notes']])
+      +     + lastCard('Last Clinic Visit', s.lc, [['Complaint','complaint'],['Diagnosis','diagnosis'],['Treatment','treatment']])
+      +   '</div>'
+      +   '<div style="margin-top:14px;">'
+      +     lastCard('Last Injury Report', s.li, [['Type','type'],['Body part','body'],['Description','desc'],['Severity','severity']])
+      +   '</div>'
+      +   '<div class="card">'
+      +     '<div style="font-weight:800;margin-bottom:8px;">📞 Emergency Contact</div>'
+      +     ((ec.n || ec.p)
+          ? ('<div style="color:#334155;line-height:1.7;"><div><b>'+esc(ec.n||'—')+'</b>'+(ec.r?(' · '+esc(ec.r)):'')+'</div>'
+              + (ec.p ? ('<div><a class="telbtn" href="tel:'+esc(ec.p)+'">📞 '+esc(ec.p)+'</a></div>') : '')
+              + '</div>')
+          : '<div class="muted">No emergency contact recorded</div>')
+      +   '</div>'
+      +   '<div class="foot">🕒 Scanned at: <b>'+esc(fmtDT(scannedAt))+'</b>'
+      +     (s.g ? (' · QR generated: <b>'+esc(fmtDT(s.g))+'</b>') : '')
+      +     (s.cnt ? (' · Physical: '+(s.cnt.p||0)+' · Clinic: '+(s.cnt.c||0)+' · Injuries: '+(s.cnt.i||0)) : '')
+      +   '</div>'
+      + '</div>';
+  }
+
+  function boot(){
+    var h = location.hash || '';
+    var m = h.match(/^#e=(.+)$/);
+    if (!m){ renderInvalid('No emergency data in link'); return; }
+    var data = fromB64Url(m[1]);
+    if (!data){ renderInvalid('Invalid QR data'); return; }
+    render(data);
+  }
+  window.addEventListener('hashchange', boot);
+  boot();
+})();
+</script>
+</body>
+</html>
