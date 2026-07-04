@@ -49,12 +49,36 @@
   .stat{text-align:center;padding:8px 6px}
   .stat .n{font-size:20px;font-weight:800;color:#0f172a}
   .stat .l{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#64748b;font-weight:700;margin-top:2px}
+  .live-badge{display:inline-flex;align-items:center;gap:6px;background:#dcfce7;color:#166534;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:#16a34a;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
   @media print{ .no-print{display:none !important} body{background:#fff} .emg-header{position:static} .card{box-shadow:none;border:1px solid #e2e8f0;break-inside:avoid} .telbtn{background:#fff;color:#dc2626;border:1px solid #dc2626;box-shadow:none} }
 </style>
+
+<!-- Firebase Compat SDK (matches the main app) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
 </head>
 <body>
-<div id="root"><div class="wrap"><div class="card" style="text-align:center;padding:40px;color:#64748b;">Loading emergency info…</div></div></div>
+<div id="root"><div class="wrap"><div class="card" style="text-align:center;padding:40px;color:#64748b;">Loading latest emergency info…</div></div></div>
 <script>
+/* =====================================================================
+   Firebase configuration
+   The Web API key is a public identifier (safe to embed); real access is
+   controlled by your Realtime Database security rules.
+   ===================================================================== */
+var firebaseConfig = {
+  apiKey: "AIzaSyCmxCr5-jG9MPWRQea5TOzWlUk8pgRMjrs",
+  authDomain: "ymco-medical-records.firebaseapp.com",
+  databaseURL: "https://ymco-medical-records-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "ymco-medical-records",
+  storageBucket: "ymco-medical-records.firebasestorage.app",
+  messagingSenderId: "50957375156",
+  appId: "1:50957375156:web:5797087c6514bd796269e1",
+  measurementId: "G-C335G5EL6N"
+};
+try { firebase.initializeApp(firebaseConfig); } catch(e){ /* already init'd */ }
+
 (function(){
   var esc = function(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);}); };
   var fmtDT = function(d){ try{ if(!d) return ''; return new Date(d).toLocaleString('en-GB'); } catch(_){ return String(d||''); } };
@@ -80,7 +104,6 @@
           : '<div class="muted">None recorded</div>')
       + '</div>';
   }
-  // Friendly labels for known keys (supports multiple naming conventions from the QR generator)
   var FIELD_LABELS = {
     result:'Result', status:'Status', notes:'Notes', note:'Notes', remarks:'Remarks',
     complaint:'Complaint', symptoms:'Symptoms', diagnosis:'Diagnosis', treatment:'Treatment',
@@ -106,11 +129,9 @@
     if (!entry || (typeof entry === 'object' && !Array.isArray(entry) && Object.keys(entry).length === 0)) {
       return '<div class="none">'+esc(title)+': none on record</div>';
     }
-    // Support array of reports: show most recent (first) with a count
     var count = 0, item = entry;
     if (Array.isArray(entry)) { count = entry.length; item = entry[0] || {}; }
     if (typeof item !== 'object') item = { details: item };
-
     var dateVal = item.date || item.d || item.when || item.createdAt || item.created_at || item.reportedAt || '';
     var skipKeys = {date:1,d:1,when:1,createdAt:1,created_at:1,reportedAt:1};
     var rows = Object.keys(item).map(function(k){
@@ -118,40 +139,48 @@
       var v = fmtVal(item[k]);
       return v ? '<div><b>'+esc(humanize(k))+':</b> '+esc(v)+'</div>' : '';
     }).filter(Boolean).join('');
-
     var badge = count > 1 ? ' <span class="sub" style="font-size:11px;">('+count+' reports)</span>' : '';
     return '<div class="last"><div class="hd"><span>'+esc(title)+badge+'</span>'
       + '<span class="sub" style="font-size:12px;font-weight:600;">'+esc(fmtD(dateVal)||'')+'</span></div>'
       + '<div class="body">'+(rows || '<span class="muted">No details recorded</span>')+'</div></div>';
   }
-
   function statBox(n, l){
     return '<div class="stat"><div class="n">'+esc(n||'—')+'</div><div class="l">'+esc(l)+'</div></div>';
   }
-
   function renderInvalid(msg){
     document.getElementById('root').innerHTML =
       '<div class="wrap"><div class="card" style="text-align:center;padding:40px;">'
       + '<div style="font-size:48px;color:#b91c1c;">⚠️</div>'
       + '<h1 style="margin-top:12px;color:#0f172a;">'+esc(msg||'Invalid QR data')+'</h1>'
-      + '<p style="color:#64748b;margin-top:8px;">This QR does not contain valid emergency data.</p>'
+      + '<p style="color:#64748b;margin-top:8px;">This QR could not be resolved to a worker profile.</p>'
+      + '</div></div>';
+  }
+  function renderLoading(msg){
+    document.getElementById('root').innerHTML =
+      '<div class="wrap"><div class="card" style="text-align:center;padding:40px;color:#64748b;">'
+      + '<div style="font-size:32px;">⏳</div><div style="margin-top:10px;">'+esc(msg||'Loading…')+'</div>'
       + '</div></div>';
   }
 
-  function render(s){
+  function render(s, opts){
+    opts = opts || {};
     var cnt = s.cnt || {};
     var scannedAt = new Date();
     document.title = 'Emergency Info - ' + (s.n || 'Worker');
 
+    var liveBadge = opts.live
+      ? '<span class="live-badge"><span class="live-dot"></span>Live data</span>'
+      : '';
+
     var header =
         '<div class="emg-header">'
-      +   '<div><div class="lbl">Emergency Medical Info</div><div class="nm">🚑 '+esc(s.n||'')+'</div></div>'
+      +   '<div><div class="lbl">Emergency Medical Info '+liveBadge+'</div><div class="nm">🚑 '+esc(s.n||'')+'</div></div>'
       +   '<div class="no-print" style="display:flex;gap:8px;">'
+      +     '<button class="btn" onclick="location.reload()">🔄 Refresh</button>'
       +     '<button class="btn" onclick="window.print()">🖨️ Print</button>'
       +   '</div>'
       + '</div>';
 
-    // Identity card
     var identity =
         '<div class="card">'
       +   '<div class="row">'
@@ -173,7 +202,6 @@
       +   '</div>'
       + '</div>';
 
-    // Vitals / critical medical summary
     var vitals =
         '<div class="card">'
       +   '<h2><span class="ico">❤️</span> Critical Medical Summary</h2>'
@@ -188,7 +216,6 @@
       +   listBlock('💊 Current Medications', s.md||[], 'med-list')
       + '</div>';
 
-    // Medical history — accept multiple key names from the reports source
     var lp = s.lp || s.lastPhysical || s.physical || s.exams || s.pe;
     var lc = s.lc || s.lastClinic   || s.clinic   || s.visits || s.cv;
     var li = s.li || s.lastInjury   || s.injury   || s.injuries || s.ir;
@@ -212,11 +239,10 @@
       +   '</div>'
       + '</div>';
 
-
     var footer =
         '<div class="foot">'
       +   '🕒 Scanned: <b>'+esc(fmtDT(scannedAt))+'</b>'
-      +   (s.g   ? ' · QR generated: <b>'+esc(fmtDT(s.g))+'</b>' : '')
+      +   (opts.live ? ' · Fetched live from database' : (s.g   ? ' · QR generated: <b>'+esc(fmtDT(s.g))+'</b>' : ''))
       +   (s.upd ? ' · Records updated: <b>'+esc(fmtDT(s.upd))+'</b>' : '')
       + '</div>';
 
@@ -224,13 +250,193 @@
       header + '<div class="wrap">' + identity + vitals + history + footer + '</div>';
   }
 
+  /* ============ Live snapshot builder (mirrors the main app) ============ */
+  function truncate(s, n){ s = String(s||''); return s.length>n ? s.slice(0,n-1)+'…' : s; }
+  function pickV(o, keys){ for (var i=0;i<keys.length;i++){ var k=keys[i]; if (o && o[k]!=null && String(o[k]).trim()!=='') return String(o[k]).trim(); } return ''; }
+  function toArray(x){ if (!x) return []; if (Array.isArray(x)) return x; if (typeof x==='object') return Object.keys(x).map(function(k){ return x[k]; }); return []; }
+
+  function extractCritical(records){
+    var chronic = new Set(), allergies = new Set(), meds = new Set();
+    var chronicKeys = ['chronicDiseases','chronic_disease','chronic','pastMedicalHistory','pmh','medicalHistory','conditions'];
+    var allergyKeys = ['allergies','allergy','knownAllergies','drugAllergies'];
+    var medKeys = ['medications','currentMedications','regularMedications','medication','drugs','prescription','currentMeds'];
+    var splitAdd = function(set, val){
+      if (!val) return;
+      String(val).split(/[,;\n\|\/]+/).forEach(function(x){
+        x = x.trim();
+        if (x && !/^(none|no|nil|n\/a|na|--|-)$/i.test(x)) set.add(x);
+      });
+    };
+    records.forEach(function(r){
+      var d = (r && r.data) ? r.data : (r||{});
+      chronicKeys.forEach(function(k){ if (d[k]) splitAdd(chronic, d[k]); });
+      allergyKeys.forEach(function(k){ if (d[k]) splitAdd(allergies, d[k]); });
+      medKeys.forEach(function(k){ if (d[k]) splitAdd(meds, d[k]); });
+    });
+    return { chronic: Array.from(chronic), allergies: Array.from(allergies), medications: Array.from(meds) };
+  }
+
+  function shrink(entry, fieldMap){
+    if (!entry) return null;
+    var d = entry.data || entry || {};
+    var out = { date: entry.date || d.date || d.visitDate || d.injuryDate || '' };
+    Object.keys(fieldMap).forEach(function(k){
+      var v = pickV(d, fieldMap[k]);
+      if (v) out[k] = truncate(v, 120);
+    });
+    return out;
+  }
+
+  function buildLiveSnapshot(worker, phys, clinic, inj){
+    var crit = extractCritical(phys.concat(clinic));
+    var bloodType = '';
+    phys.concat(clinic).forEach(function(r){
+      var d = (r && r.data) || {};
+      var bt = pickV(d, ['bloodType','bloodGroup','blood_group']);
+      if (bt && !bloodType) bloodType = bt;
+    });
+    var dateOf = function(e){ return e ? (e.date || (e.data&&(e.data.date||e.data.visitDate||e.data.injuryDate)) || '') : ''; };
+    var lastOf = function(arr){
+      if (!arr.length) return null;
+      return arr.slice().sort(function(a,b){
+        return new Date(dateOf(b)||0).getTime() - new Date(dateOf(a)||0).getTime();
+      })[0];
+    };
+    var lastPhys = lastOf(phys), lastClin = lastOf(clinic), lastInj = lastOf(inj);
+    var bp='', bs='';
+    var cand = phys.concat(clinic).slice().sort(function(a,b){ return new Date(dateOf(b)||0).getTime() - new Date(dateOf(a)||0).getTime(); });
+    for (var i=0;i<cand.length;i++){
+      var d=(cand[i]&&cand[i].data)||{};
+      if (!bp){
+        var v = pickV(d, ['blood_pressure','bloodPressure','bp']);
+        if (!v){
+          var sys = pickV(d, ['bp_systolic','systolic']);
+          var dia = pickV(d, ['bp_diastolic','diastolic']);
+          if (sys && dia) v = sys+'/'+dia;
+        }
+        if (v) bp = v;
+      }
+      if (!bs){
+        var v2 = pickV(d, ['rbg','blood_sugar','bloodSugar','glucose','randomBloodSugar']);
+        if (v2) bs = v2;
+      }
+      if (bp && bs) break;
+    }
+    var allDates = phys.concat(clinic, inj).map(dateOf).filter(Boolean).map(function(x){ return new Date(x).getTime(); }).filter(function(t){ return !isNaN(t); });
+    var updated = allDates.length ? new Date(Math.max.apply(null, allDates)).toISOString() : '';
+    var fitness = lastPhys ? pickV((lastPhys.data||{}), ['fitnessStatus','status','fitnessResult','result']) : '';
+
+    return {
+      v:3, t:'eprof',
+      n: worker.name||'', id: worker.id||'', nid: worker.nationalId||worker.id||'',
+      co: worker.company||'',
+      j: worker.role||worker.job||'',
+      jt: worker.jobTitle||worker.role||worker.job||'',
+      dp: worker.department||'',
+      ag: worker.age||'', nt: worker.nationality||'', ph: worker.phone||'',
+      st: worker.site||worker.location||worker.projectSite||worker.project||worker.projectName||worker.workSite||worker.workLocation||'',
+      bt: bloodType, mfs: fitness, bp: bp, bs: bs,
+      lme: dateOf(lastPhys), lcv: dateOf(lastClin), lid: dateOf(lastInj),
+      al: crit.allergies.slice(0,10),
+      ch: crit.chronic.slice(0,10),
+      md: crit.medications.slice(0,10),
+      lp: shrink(lastPhys, {
+        result:['result','examResult','fitnessResult','fitnessStatus'],
+        status:['status','fitnessStatus','medicalStatus'],
+        doctor:['doctor','physician','examinedBy','doctorName'],
+        clinic:['clinic','hospital','medicalCenter','facility'],
+        examType:['examType','type','category'],
+        weight:['weight'], height:['height'], bmi:['bmi'],
+        bp:['blood_pressure','bloodPressure','bp'],
+        bs:['rbg','blood_sugar','bloodSugar','glucose','randomBloodSugar'],
+        hr:['heart_rate','heartRate','pulse'],
+        temp:['temperature','temp'],
+        vision:['vision','eyeSight','visualAcuity'],
+        recommendations:['recommendations','recommendation','advice'],
+        notes:['notes','remarks','comment','comments']
+      }),
+      lc: shrink(lastClin, {
+        complaint:['complaint','chiefComplaint','presentComplaint','symptoms'],
+        diagnosis:['diagnosis','impression','assessment'],
+        treatment:['treatment','plan','managementPlan'],
+        medication:['medication','medications','prescription','drugs'],
+        doctor:['doctor','physician','doctorName','attendedBy'],
+        clinic:['clinic','hospital','medicalCenter','facility'],
+        bp:['blood_pressure','bloodPressure','bp'],
+        bs:['rbg','blood_sugar','bloodSugar','glucose'],
+        temp:['temperature','temp'],
+        followup:['followup','follow_up','followUp','nextVisit'],
+        outcome:['outcome','result','disposition'],
+        notes:['notes','remarks','comment','comments']
+      }),
+      li: shrink(lastInj, {
+        reportId:['report_ref_no','reportId','id','ref','refNo','reportNumber'],
+        reportDate:['report_date','date','injuryDate','incidentDate'],
+        injuryKind:['injury_kind','injuryType','type','natureOfInjury'],
+        cause:['cause','rootCause','mechanism'],
+        bodyParts:['body_parts_selected','bodyPart','injuryLocation','part'],
+        description:['injury_details','description','howHappened','details','narrative'],
+        severity:['severity','grade','level'],
+        firstAid:['firstaid','first_aid','firstAid'],
+        treatment:['treatment_action','treatment','medicalTreatment','management'],
+        referral:['referral','referred','refer'],
+        referredHospital:['referred_hospital','refer_hospital','hospital'],
+        status:['status_ip','status','disposition'],
+        outcome:['outcome','result'],
+        clinicalNotes:['clinical_notes','clinicalNotes','notes','remarks']
+      }),
+      cnt: { p: phys.length, c: clinic.length, i: inj.length },
+      upd: updated
+    };
+  }
+
+  function loadFromFirebase(workerId){
+    renderLoading('Fetching latest records for worker ' + workerId + '…');
+    if (typeof firebase === 'undefined' || !firebase.database){
+      renderInvalid('Firebase SDK failed to load. Check your internet connection.');
+      return;
+    }
+    var db = firebase.database();
+    db.ref('medicalRecords').get().then(function(snap){
+      if (!snap.exists()){ renderInvalid('No medical records in database'); return; }
+      var data = snap.val() || {};
+      var workers = data.workers || [];
+      if (!Array.isArray(workers)) workers = Object.keys(workers).map(function(k){ return workers[k]; });
+      var worker = null;
+      for (var i=0;i<workers.length;i++){
+        if (workers[i] && String(workers[i].id) === String(workerId)){ worker = workers[i]; break; }
+      }
+      if (!worker){ renderInvalid('Worker ' + workerId + ' not found'); return; }
+      var phys   = toArray((data.physicalReports || {})[workerId]);
+      var clinic = toArray((data.clinicReports   || {})[workerId]);
+      var inj    = toArray((data.injuryReports   || {})[workerId]);
+      var s = buildLiveSnapshot(worker, phys, clinic, inj);
+      render(s, { live: true });
+    }).catch(function(err){
+      console.error('Firebase read failed:', err);
+      renderInvalid('Could not fetch latest data: ' + (err && err.message ? err.message : 'unknown error'));
+    });
+  }
+
   function boot(){
     var h = location.hash || '';
-    var m = h.match(/^#e=(.+)$/);
-    if (!m){ renderInvalid('No emergency data in link'); return; }
-    var data = fromB64Url(m[1]);
-    if (!data){ renderInvalid('Invalid QR data'); return; }
-    render(data);
+    // Preferred: live lookup by worker id
+    var mw = h.match(/^#w=(.+)$/);
+    if (mw){
+      var wid = '';
+      try { wid = decodeURIComponent(mw[1]); } catch(_) { wid = mw[1]; }
+      loadFromFirebase(wid);
+      return;
+    }
+    // Backward-compat: self-contained snapshot QRs
+    var me = h.match(/^#e=(.+)$/);
+    if (me){
+      var data = fromB64Url(me[1]);
+      if (!data){ renderInvalid('Invalid QR data'); return; }
+      render(data, { live: false });
+      return;
+    }
+    renderInvalid('No worker in link');
   }
   window.addEventListener('hashchange', boot);
   boot();
