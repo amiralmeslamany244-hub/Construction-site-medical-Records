@@ -11152,6 +11152,18 @@ window.YMCO_showSplash = function(){
                             // 1) Add the .pdf-capture marker on <html> too, so any
                             //    selector authored as `.pdf-capture …` keeps working.
                             clonedDoc.documentElement.classList.add('pdf-capture', 'print-emulated');
+                            // Safety: emergency-live-print class must never be
+                            // present in the PDF capture (its @media-print rules
+                            // hide everything except #liveEmergencyView, which
+                            // does not exist in the captured modal → blank PDF).
+                            try { clonedDoc.body.classList.remove('emergency-live-print'); } catch(_){}
+                            try {
+                              const safety = clonedDoc.createElement('style');
+                              safety.textContent =
+                                'body > *:not(#liveEmergencyView){display:revert !important;visibility:visible !important;}' +
+                                '#liveEmergencyView{display:none !important;}';
+                              clonedDoc.head.appendChild(safety);
+                            } catch(_){}
                             // 2) Force-print color rendering on every element +
                             //    inject the SAME @page geometry html2pdf is using
                             //    so any layout that reacts to @page size/margins
@@ -19662,12 +19674,15 @@ window.toggleInjuryPrintPreview = function(){
   body:has(#liveEmergencyView[style*="display:block"]) { overflow: auto !important; height: auto !important; position: static !important; }
 </style>
 <style id="live-emg-print">
+/* Scoped to body.emergency-live-print so it ONLY affects printing the live
+   emergency view — never fires accidentally during PDF capture (html2pdf
+   rewrites @media print to @media all) or during clinic/injury print preview. */
 @media print {
-  body > *:not(#liveEmergencyView) { display: none !important; }
-  #liveEmergencyView { position: static !important; inset: auto !important; overflow: visible !important; background: #fff !important; display: block !important; height: auto !important; }
-  #liveEmergencyView .no-print { display: none !important; }
-  #liveEmergencyView .emg-header { position: static !important; box-shadow: none !important; }
-  a[href^="tel:"] { color: #000 !important; text-decoration: none !important; }
+  body.emergency-live-print > *:not(#liveEmergencyView) { display: none !important; }
+  body.emergency-live-print #liveEmergencyView { position: static !important; inset: auto !important; overflow: visible !important; background: #fff !important; display: block !important; height: auto !important; }
+  body.emergency-live-print #liveEmergencyView .no-print { display: none !important; }
+  body.emergency-live-print #liveEmergencyView .emg-header { position: static !important; box-shadow: none !important; }
+  body.emergency-live-print a[href^="tel:"] { color: #000 !important; text-decoration: none !important; }
   @page { margin: 12mm; }
 }
 </style>
@@ -20002,7 +20017,12 @@ window.toggleInjuryPrintPreview = function(){
   window.printEmergencyLive = function(name){
     const prev = document.title;
     try { document.title = 'Emergency Info - ' + (name || 'worker'); } catch(e){}
-    const restore = () => { try { document.title = prev; } catch(e){} window.removeEventListener('afterprint', restore); };
+    try { document.body.classList.add('emergency-live-print'); } catch(e){}
+    const restore = () => {
+      try { document.title = prev; } catch(e){}
+      try { document.body.classList.remove('emergency-live-print'); } catch(e){}
+      window.removeEventListener('afterprint', restore);
+    };
     window.addEventListener('afterprint', restore);
     setTimeout(() => { window.print(); }, 50);
   };
