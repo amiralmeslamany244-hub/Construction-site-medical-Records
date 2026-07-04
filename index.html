@@ -19323,18 +19323,47 @@ window.toggleInjuryPrintPreview = function(){
       </div>`).join('');
   };
 
+  // Extract Critical Medical (chronic diseases, allergies, current medications)
+  // from a set of reports. Supports both generic keys (chronicDiseases, allergies,
+  // medications, ...) AND the actual Site Clinic Report form field names
+  // (past_history / current_med / med_allergy / food_allergy with *_specify text).
+  window._extractCriticalMedical = function(reports){
+    const chronic = new Set(), allergies = new Set(), meds = new Set();
+    const norm = v => String(v==null?'':v).trim();
+    const isYes = v => /^(y|yes|true|1)$/i.test(norm(v));
+    (reports||[]).forEach(r => {
+      const d = (r && r.data) ? r.data : {};
+      // Generic keys (fallbacks)
+      ['chronicDiseases','chronic','chronic_disease','medicalHistory','history','pastMedicalHistory']
+        .forEach(k => { if (d[k]) chronic.add(norm(d[k])); });
+      ['allergies','allergy','drugAllergy','foodAllergy']
+        .forEach(k => { if (d[k]) allergies.add(norm(d[k])); });
+      ['medications','currentMedications','medication','drugs','treatment']
+        .forEach(k => { if (d[k]) meds.add(norm(d[k])); });
+      // Site Clinic Report form fields
+      if (isYes(d.past_history) && norm(d.past_history_specify))
+        chronic.add(norm(d.past_history_specify));
+      if (isYes(d.current_med) && norm(d.current_med_specify))
+        meds.add(norm(d.current_med_specify));
+      if (isYes(d.med_allergy) && norm(d.med_allergy_specify))
+        allergies.add('Medication: ' + norm(d.med_allergy_specify));
+      if (isYes(d.food_allergy) && norm(d.food_allergy_specify))
+        allergies.add('Food: ' + norm(d.food_allergy_specify));
+    });
+    return {
+      chronic: Array.from(chronic).filter(Boolean),
+      allergies: Array.from(allergies).filter(Boolean),
+      medications: Array.from(meds).filter(Boolean)
+    };
+  };
+
   window.buildEmergencyPayload = function(worker){
     const phys = (typeof workerPhysicalReports!=='undefined' && workerPhysicalReports[worker.id]) || [];
     const clinic = (typeof workerClinicReports!=='undefined' && workerClinicReports[worker.id]) || [];
     const injuries = (typeof workerInjuryReports!=='undefined' && workerInjuryReports[worker.id]) || [];
 
-    const chronicSet = new Set();
-    [...phys, ...clinic].forEach(r => {
-      const d = r && r.data ? r.data : {};
-      ['chronicDiseases','chronic','chronic_disease','medicalHistory','history','pastMedicalHistory']
-        .forEach(k => { if (d[k]) chronicSet.add(String(d[k]).trim()); });
-    });
-    const chronicDiseases = Array.from(chronicSet).filter(Boolean).join('; ');
+    const crit = window._extractCriticalMedical([...phys, ...clinic]);
+    const chronicDiseases = crit.chronic.join('; ');
 
     const injuryList = injuries.map(r => {
       const d = r && r.data ? r.data : {};
@@ -19362,11 +19391,14 @@ window.toggleInjuryPrintPreview = function(){
       job: worker.role || '', department: worker.department || '',
       age: worker.age || '', nationality: worker.nationality || '',
       phone: worker.phone || '',
-      chronicDiseases: truncate(chronicDiseases, 200),
+      chronicDiseases: truncate(chronicDiseases, 400),
+      allergies: crit.allergies,
+      medications: crit.medications,
       injuries: injuryList, clinicVisits: clinicVisits,
       generatedAt: new Date().toISOString()
     };
   };
+
 
   // Encode a JS object into URL-safe base64 (UTF-8 safe)
   function toB64Url(obj){
@@ -19382,17 +19414,17 @@ window.toggleInjuryPrintPreview = function(){
     const clinic = (typeof workerClinicReports!=='undefined'   && workerClinicReports[worker.id])   || [];
     const inj    = (typeof workerInjuryReports!=='undefined'   && workerInjuryReports[worker.id])   || [];
     const pickV = (o, keys) => { for (const k of keys){ if (o && o[k]!=null && String(o[k]).trim()!=='') return String(o[k]).trim(); } return ''; };
-    const chronic = new Set(), allergies = new Set(), meds = new Set();
+    const crit = window._extractCriticalMedical([...phys, ...clinic]);
+    const chronic = new Set(crit.chronic);
+    const allergies = new Set(crit.allergies);
+    const meds = new Set(crit.medications);
     let bloodType = '';
-    const scan = arr => arr.forEach(r => {
+    [...phys, ...clinic].forEach(r => {
       const d = (r && r.data) ? r.data : {};
-      ['chronicDiseases','chronic','chronic_disease','medicalHistory','history','pastMedicalHistory'].forEach(k=>{ if(d[k]) chronic.add(String(d[k]).trim()); });
-      ['allergies','allergy','drugAllergy','foodAllergy'].forEach(k=>{ if(d[k]) allergies.add(String(d[k]).trim()); });
-      ['medications','currentMedications','medication','drugs','treatment'].forEach(k=>{ if(d[k]) meds.add(String(d[k]).trim()); });
       const bt = pickV(d, ['bloodType','bloodGroup','blood_group']);
       if (bt && !bloodType) bloodType = bt;
     });
-    scan(phys); scan(clinic);
+
     const lastOf = arr => {
       if (!arr.length) return null;
       return [...arr].sort((a,b)=>{
@@ -19564,10 +19596,6 @@ window.toggleInjuryPrintPreview = function(){
         <div class="hd"><i class="fas fa-ambulance"></i> EMERGENCY QR</div>
         <img src="${c.qr}" alt="QR">
         <div class="nm">${esc(c.name)}</div>
-        <div class="meta">ID: <b>${esc(c.id)}</b></div>
-        <div class="meta">${esc(c.job)}${c.dept?(' · '+esc(c.dept)):''}</div>
-        <div class="meta">${c.phone?('☎ '+esc(c.phone)):''}${c.bt?('  ·  Blood: <b>'+esc(c.bt)+'</b>'):''}</div>
-        <div class="foot">Scan to view live medical info</div>
       </div>`).join('');
 
     const win = window.open('', '_blank');
@@ -19676,20 +19704,19 @@ window.toggleInjuryPrintPreview = function(){
   }
 
   function extractCriticalMedical(physicalArr, clinicArr){
-    const chronic = new Set(), allergies = new Set(), meds = new Set();
+    const base = (window._extractCriticalMedical
+      ? window._extractCriticalMedical([...(physicalArr||[]), ...(clinicArr||[])])
+      : { chronic:[], allergies:[], medications:[] });
     let bloodType = '';
-    const scan = (arr) => (arr||[]).forEach(r => {
+    [...(physicalArr||[]), ...(clinicArr||[])].forEach(r => {
       const d = (r && r.data) ? r.data : {};
-      ['chronicDiseases','chronic','chronic_disease','medicalHistory','history','pastMedicalHistory']
-        .forEach(k => { if (d[k]) chronic.add(String(d[k]).trim()); });
-      ['allergies','allergy','drugAllergy','foodAllergy']
-        .forEach(k => { if (d[k]) allergies.add(String(d[k]).trim()); });
-      ['medications','currentMedications','medication','drugs','treatment']
-        .forEach(k => { if (d[k]) meds.add(String(d[k]).trim()); });
       const bt = pick(d, ['bloodType','bloodGroup','blood_group']);
       if (bt && !bloodType) bloodType = String(bt).trim();
     });
-    scan(physicalArr); scan(clinicArr);
+    const chronic = new Set(base.chronic);
+    const allergies = new Set(base.allergies);
+    const meds = new Set(base.medications);
+
     return {
       bloodType,
       chronic: Array.from(chronic).filter(Boolean),
@@ -20149,7 +20176,6 @@ window.toggleInjuryPrintPreview = function(){
 
         <div class="eqv-card">
           <div class="eqv-pills">
-            <span class="eqv-pill blood"><i class="fas fa-tint"></i> ${esc(dash(p.bt))}</span>
             ${p.mfs?`<span class="eqv-pill ${fitCls}"><i class="fas fa-heart-pulse"></i> ${esc(p.mfs)}</span>`:''}
           </div>
         </div>
@@ -20159,6 +20185,9 @@ window.toggleInjuryPrintPreview = function(){
           <div class="eqv-row"><span class="k">Employee ID</span><span class="v">${esc(dash(p.id))}</span></div>
           <div class="eqv-row"><span class="k">Company</span><span class="v">${esc(dash(p.co))}</span></div>
           <div class="eqv-row"><span class="k">Job Title</span><span class="v">${esc(dash(p.jt||p.j))}</span></div>
+          <div class="eqv-row"><span class="k">Department</span><span class="v">${esc(dash(p.dp))}</span></div>
+          <div class="eqv-row"><span class="k">Age</span><span class="v">${esc(dash(p.ag))}</span></div>
+          <div class="eqv-row"><span class="k">Phone</span><span class="v">${esc(dash(p.ph))}</span></div>
           <div class="eqv-row"><span class="k">Nationality</span><span class="v">${esc(dash(p.nt))}</span></div>
         </div>
 
@@ -20185,19 +20214,6 @@ window.toggleInjuryPrintPreview = function(){
           <div class="eqv-row"><span class="k">Last Injury Date</span><span class="v">${fmtDate(p.lid)}</span></div>
         </div>
 
-        <div class="eqv-card">
-          <h2><i class="fas fa-phone-volume"></i> Emergency Contact</h2>
-          ${ec.p?`<a class="eqv-contact" href="tel:${esc(String(ec.p).replace(/[^\d+]/g,''))}">
-            <i class="fas fa-phone"></i>
-            <div>
-              <div class="name">${esc(dash(ec.n))} ${ec.r?'· '+esc(ec.r):''}</div>
-              <div class="phone">${esc(ec.p)}</div>
-            </div>
-          </a>`:`
-            <div class="eqv-row"><span class="k">Name</span><span class="v">${esc(dash(ec.n))}</span></div>
-            <div class="eqv-row"><span class="k">Phone</span><span class="v">—</span></div>
-          `}
-        </div>
 
         <div class="eqv-stats">
           <div class="eqv-stat"><div class="n">${esc(String(cnt.p||0))}</div><div class="l">Medical<br>Records</div></div>
